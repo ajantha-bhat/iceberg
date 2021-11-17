@@ -22,7 +22,9 @@ package org.apache.iceberg.nessie;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configurable;
@@ -30,6 +32,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.BaseMetastoreCatalog;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
@@ -343,6 +347,21 @@ public class NessieCatalog extends BaseMetastoreCatalog implements AutoCloseable
 
   FileIO fileIO() {
     return fileIO;
+  }
+
+  public TableMetadata loadTableMetadata(String newLocation) {
+    int numRetries = 2;
+    Predicate<Exception> shouldRetry = null;
+
+    // TODO unify, copied from org.apache.iceberg.BaseMetastoreTableOperations.refreshFromMetadataLocation()
+    AtomicReference<TableMetadata> newMetadata = new AtomicReference<>();
+    Tasks.foreach(newLocation)
+        .retry(numRetries).exponentialBackoff(100, 5000, 600000, 4.0 /* 100, 400, 1600, ... */)
+        .throwFailureWhenFinished()
+        .shouldRetryTest(shouldRetry)
+        .run(metadataLocation -> newMetadata.set(
+            TableMetadataParser.read(fileIO, metadataLocation)));
+    return newMetadata.get();
   }
 
   private IcebergTable table(TableIdentifier tableIdentifier) {
