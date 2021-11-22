@@ -302,6 +302,23 @@ public class TestNessieTable extends BaseTestIceberg {
   }
 
   @Test
+  public void testTableMetadataFileLocation() throws IOException {
+    Table table = catalog.loadTable(TABLE_IDENTIFIER);
+
+    String location1 = addRecordsToFile(table, "file1");
+
+    DataFile file1 = makeDataFile(table, location1);
+    // add data file
+    table.newAppend().appendFile(file1).commit();
+
+    TableOperations ops = ((HasTableOperations) table).operations();
+
+    String currentMetadataFileLocation = ((NessieTableOperations) ops).currentMetadataLocation();
+    String metadataFileLocation = ops.current().metadataFileLocation();
+    Assertions.assertThat(metadataFileLocation.equals(currentMetadataFileLocation)).isTrue();
+  }
+
+  @Test
   public void testExistingTableUpdate() {
     Table icebergTable = catalog.loadTable(TABLE_IDENTIFIER);
     // add a column

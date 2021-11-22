@@ -718,16 +718,22 @@ public class TableMetadata implements Serializable {
   }
 
   public TableMetadata withUpdatedSnapshotAndSchema(long snapshotId, int schemaId, int sortOrderId, int specId) {
+    List<HistoryEntry> newSnapshotLog = Lists.newArrayList();
     if (snapshotId != -1L) {
       Preconditions.checkArgument(snapshotsById.containsKey(snapshotId), "Non-existent snapshot");
+      Snapshot snapshot = snapshotsById.get(snapshotId);
+      newSnapshotLog.add(new SnapshotLogEntry(snapshot.timestampMillis(), snapshotId));
+    } else {
+      newSnapshotLog = snapshotLog;
     }
     Preconditions.checkArgument(schemasById.containsKey(schemaId), "Non-existent schema");
     Preconditions.checkArgument(sortOrdersById.containsKey(sortOrderId), "Non-existent sort-order");
     Preconditions.checkArgument(specsById.containsKey(specId), "Non-existent partition spec");
-    return new TableMetadata(null, formatVersion, uuid, location,
+
+    return new TableMetadata(this.file, formatVersion, uuid, location,
         lastSequenceNumber, System.currentTimeMillis(), lastColumnId, schemaId, schemas, specId, specs,
         lastAssignedPartitionId, sortOrderId, sortOrders, properties, snapshotId,
-        snapshots, snapshotLog, addPreviousFile(file, lastUpdatedMillis));
+        snapshots, newSnapshotLog, addPreviousFile(file, lastUpdatedMillis));
   }
 
   private PartitionSpec reassignPartitionIds(PartitionSpec partitionSpec, TypeUtil.NextID nextID) {
