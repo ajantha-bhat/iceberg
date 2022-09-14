@@ -155,6 +155,9 @@ public class ReachableFileUtil {
   @Deprecated
   public static List<String> statisticsFilesLocations(
       Table table, Predicate<StatisticsFile> predicate) {
+    // This API is called for expire snapshots spark action.
+    // Not adding the Dremio's partition stats file for expire_snapshots
+    // as Dremio has its own implementation for expire snapshots.
     return table.statisticsFiles().stream()
         .filter(predicate)
         .map(StatisticsFile::path)

@@ -433,7 +433,7 @@ public class AvroSchemaUtil {
     return name;
   }
 
-  static boolean validAvroName(String name) {
+  public static boolean validAvroName(String name) {
     int length = name.length();
     Preconditions.checkArgument(length > 0, "Empty name");
     char first = name.charAt(0);
@@ -450,7 +450,7 @@ public class AvroSchemaUtil {
     return true;
   }
 
-  static String sanitize(String name) {
+  public static String sanitize(String name) {
     int length = name.length();
     StringBuilder sb = new StringBuilder(name.length());
     char first = name.charAt(0);

@@ -206,12 +206,13 @@ public class TableTestBase {
             .listFiles(
                 (dir, name) ->
                     !name.startsWith("snap")
+                        && !name.startsWith("partition-stats")
                         && Files.getFileExtension(name).equalsIgnoreCase("avro")));
   }
 
   public static long countAllMetadataFiles(File tableDir) {
     return Arrays.stream(new File(tableDir, "metadata").listFiles())
-        .filter(f -> f.isFile())
+        .filter(f -> f.isFile() && !f.getName().startsWith("partition-stats"))
         .count();
   }
 
@@ -253,31 +254,40 @@ public class TableTestBase {
     return writer.toManifestFile();
   }
 
+  ManifestFile writeManifest(TestTables.TestTable tb, String fileName, ManifestEntry<?>... entries)
+      throws IOException {
+    return writeManifest(tb, null, fileName, entries);
+  }
+
   ManifestFile writeManifest(String fileName, ManifestEntry<?>... entries) throws IOException {
-    return writeManifest(null, fileName, entries);
+    return writeManifest(table, null, fileName, entries);
   }
 
   ManifestFile writeManifest(Long snapshotId, ManifestEntry<?>... entries) throws IOException {
     return writeManifest(snapshotId, "input.m0.avro", entries);
   }
 
-  @SuppressWarnings("unchecked")
   <F extends ContentFile<F>> ManifestFile writeManifest(
       Long snapshotId, String fileName, ManifestEntry<?>... entries) throws IOException {
+    return writeManifest(table, snapshotId, fileName, entries);
+  }
+
+  @SuppressWarnings("unchecked")
+  <F extends ContentFile<F>> ManifestFile writeManifest(
+      TestTables.TestTable tb, Long snapshotId, String fileName, ManifestEntry<?>... entries)
+      throws IOException {
     File manifestFile = temp.newFile(fileName);
     Assert.assertTrue(manifestFile.delete());
-    OutputFile outputFile = table.ops().io().newOutputFile(manifestFile.getCanonicalPath());
+    OutputFile outputFile = tb.ops().io().newOutputFile(manifestFile.getCanonicalPath());
 
     ManifestWriter<F> writer;
     if (entries[0].file() instanceof DataFile) {
       writer =
-          (ManifestWriter<F>)
-              ManifestFiles.write(formatVersion, table.spec(), outputFile, snapshotId);
+          (ManifestWriter<F>) ManifestFiles.write(formatVersion, tb.spec(), outputFile, snapshotId);
     } else {
       writer =
           (ManifestWriter<F>)
-              ManifestFiles.writeDeleteManifest(
-                  formatVersion, table.spec(), outputFile, snapshotId);
+              ManifestFiles.writeDeleteManifest(formatVersion, tb.spec(), outputFile, snapshotId);
     }
     try {
       for (ManifestEntry<?> entry : entries) {

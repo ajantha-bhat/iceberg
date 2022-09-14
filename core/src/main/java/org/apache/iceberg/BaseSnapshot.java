@@ -54,6 +54,7 @@ class BaseSnapshot implements Snapshot {
   private transient List<DataFile> removedDataFiles = null;
   private transient List<DeleteFile> addedDeleteFiles = null;
   private transient List<DeleteFile> removedDeleteFiles = null;
+  private transient String partitionStatsFileLocation = null;
 
   BaseSnapshot(
       long sequenceNumber,
@@ -286,6 +287,15 @@ class BaseSnapshot implements Snapshot {
 
     this.addedDataFiles = adds.build();
     this.removedDataFiles = deletes.build();
+  }
+
+  @Override
+  public String partitionStatsFileLocation() {
+    return partitionStatsFileLocation;
+  }
+
+  public void setPartitionStatsFileLocation(String partitionStatsFileLocation) {
+    this.partitionStatsFileLocation = partitionStatsFileLocation;
   }
 
   @Override

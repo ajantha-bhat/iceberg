@@ -22,12 +22,14 @@ import static org.apache.iceberg.TableProperties.SNAPSHOT_ID_INHERITANCE_ENABLED
 import static org.apache.iceberg.TableProperties.SNAPSHOT_ID_INHERITANCE_ENABLED_DEFAULT;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.iceberg.events.CreateSnapshotEvent;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.RuntimeIOException;
+import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
@@ -51,6 +53,7 @@ class FastAppend extends SnapshotProducer<AppendFiles> implements AppendFiles {
   private final List<ManifestFile> rewrittenAppendManifests = Lists.newArrayList();
   private List<ManifestFile> newManifests = null;
   private boolean hasNewFiles = false;
+  private final PartitionStatsMap partitionStatsMap;
 
   FastAppend(String tableName, TableOperations ops) {
     super(ops);
@@ -61,6 +64,8 @@ class FastAppend extends SnapshotProducer<AppendFiles> implements AppendFiles {
         ops.current()
             .propertyAsBoolean(
                 SNAPSHOT_ID_INHERITANCE_ENABLED, SNAPSHOT_ID_INHERITANCE_ENABLED_DEFAULT);
+    this.partitionStatsMap =
+        writePartitionStats() ? new PartitionStatsMap(ops.current().specsById()) : null;
   }
 
   @Override
@@ -94,6 +99,10 @@ class FastAppend extends SnapshotProducer<AppendFiles> implements AppendFiles {
     this.hasNewFiles = true;
     newFiles.add(file);
     summaryBuilder.addedFile(spec, file);
+    if (partitionStatsMap != null) {
+      partitionStatsMap.put(file);
+    }
+
     return this;
   }
 
@@ -118,10 +127,17 @@ class FastAppend extends SnapshotProducer<AppendFiles> implements AppendFiles {
     if (snapshotIdInheritanceEnabled && manifest.snapshotId() == null) {
       summaryBuilder.addedManifest(manifest);
       appendManifests.add(manifest);
+      if (partitionStatsMap != null) {
+        partitionStatsMap.put(
+            GenericManifestFile.copyOf(manifest).withSnapshotId(snapshotId()).build(), ops.io());
+      }
     } else {
       // the manifest must be rewritten with this update's snapshot ID
       ManifestFile copiedManifest = copyManifest(manifest);
       rewrittenAppendManifests.add(copiedManifest);
+      if (partitionStatsMap != null) {
+        partitionStatsMap.put(copiedManifest, ops.io());
+      }
     }
 
     return this;
@@ -165,6 +181,31 @@ class FastAppend extends SnapshotProducer<AppendFiles> implements AppendFiles {
     }
 
     return manifests;
+  }
+
+  @Override
+  protected String getUpdatedPartitionStatsLocation(Snapshot snapshot) {
+    PartitionsTable.PartitionMap partitionMap = partitionStatsMap.getOrCreatePartitionMap();
+    // update the snapshot ID and snapshot created time for the current snapshot.
+    partitionMap
+        .all()
+        .forEach(
+            partition -> {
+              partition.setLastUpdatedAt(snapshot.timestampMillis() * 1000L);
+              partition.setLastUpdatedSnapshotId(snapshot.snapshotId());
+            });
+
+    try (CloseableIterable<Partition> recordIterator =
+        getPartitionStatsEntriesFromParentSnapshot()) {
+      recordIterator.forEach(
+          partition -> partitionMap.get(partition.partitionData()).add(partition));
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+
+    OutputFile outputFile = newPartitionStatsFile();
+    writePartitionStatsEntries(partitionMap.all(), outputFile);
+    return outputFile.location();
   }
 
   @Override

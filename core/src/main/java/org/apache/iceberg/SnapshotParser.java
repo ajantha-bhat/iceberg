@@ -48,6 +48,7 @@ public class SnapshotParser {
   private static final String MANIFESTS = "manifests";
   private static final String MANIFEST_LIST = "manifest-list";
   private static final String SCHEMA_ID = "schema-id";
+  private static final String PARTITION_STATS_FILE_LOCATION = "partition-stats-file-location";
 
   static void toJson(Snapshot snapshot, JsonGenerator generator) throws IOException {
     generator.writeStartObject();
@@ -91,6 +92,11 @@ public class SnapshotParser {
     // schema ID might be null for snapshots written by old writers
     if (snapshot.schemaId() != null) {
       generator.writeNumberField(SCHEMA_ID, snapshot.schemaId());
+    }
+
+    if (snapshot.partitionStatsFileLocation() != null) {
+      generator.writeStringField(
+          PARTITION_STATS_FILE_LOCATION, snapshot.partitionStatsFileLocation());
     }
 
     generator.writeEndObject();
@@ -144,31 +150,42 @@ public class SnapshotParser {
 
     Integer schemaId = JsonUtil.getIntOrNull(SCHEMA_ID, node);
 
+    String partitionStatsFileLocation =
+        JsonUtil.getStringOrNull(PARTITION_STATS_FILE_LOCATION, node);
+
     if (node.has(MANIFEST_LIST)) {
       // the manifest list is stored in a manifest list file
       String manifestList = JsonUtil.getString(MANIFEST_LIST, node);
-      return new BaseSnapshot(
-          sequenceNumber,
-          snapshotId,
-          parentId,
-          timestamp,
-          operation,
-          summary,
-          schemaId,
-          manifestList);
+      BaseSnapshot snapshot =
+          new BaseSnapshot(
+              sequenceNumber,
+              snapshotId,
+              parentId,
+              timestamp,
+              operation,
+              summary,
+              schemaId,
+              manifestList);
+      snapshot.setPartitionStatsFileLocation(partitionStatsFileLocation);
 
+      return snapshot;
     } else {
       // fall back to an embedded manifest list. pass in the manifest's InputFile so length can be
       // loaded lazily, if it is needed
-      return new BaseSnapshot(
-          sequenceNumber,
-          snapshotId,
-          parentId,
-          timestamp,
-          operation,
-          summary,
-          schemaId,
-          JsonUtil.getStringList(MANIFESTS, node).toArray(new String[0]));
+      String[] manifestLocations = JsonUtil.getStringList(MANIFESTS, node).toArray(new String[0]);
+      BaseSnapshot snapshot =
+          new BaseSnapshot(
+              sequenceNumber,
+              snapshotId,
+              parentId,
+              timestamp,
+              operation,
+              summary,
+              schemaId,
+              manifestLocations);
+      snapshot.setPartitionStatsFileLocation(partitionStatsFileLocation);
+
+      return snapshot;
     }
   }
 

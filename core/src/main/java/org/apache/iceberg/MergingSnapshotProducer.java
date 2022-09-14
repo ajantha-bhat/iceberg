@@ -81,6 +81,7 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
   private final ManifestMergeManager<DeleteFile> deleteMergeManager;
   private final ManifestFilterManager<DeleteFile> deleteFilterManager;
   private final boolean snapshotIdInheritanceEnabled;
+  private final PartitionStatsMap partitionStatsMap;
 
   // update data
   private final List<DataFile> newDataFiles = Lists.newArrayList();
@@ -127,6 +128,8 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
         ops.current()
             .propertyAsBoolean(
                 SNAPSHOT_ID_INHERITANCE_ENABLED, SNAPSHOT_ID_INHERITANCE_ENABLED_DEFAULT);
+    this.partitionStatsMap =
+        writePartitionStats() ? new PartitionStatsMap(ops.current().specsById()) : null;
   }
 
   @Override
@@ -242,6 +245,9 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
     addedFilesSummary.addedFile(dataSpec(), file);
     hasNewDataFiles = true;
     newDataFiles.add(file);
+    if (partitionStatsMap != null) {
+      partitionStatsMap.put(file);
+    }
   }
 
   /** Add a delete file to the new snapshot. */
@@ -264,6 +270,9 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
     deleteFiles.add(fileHolder);
     addedFilesSummary.addedFile(fileSpec, fileHolder.deleteFile());
     hasNewDeleteFiles = true;
+    if (partitionStatsMap != null) {
+      partitionStatsMap.put(fileHolder.deleteFile());
+    }
   }
 
   private void setDataSpec(DataFile file) {
@@ -284,10 +293,17 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
     if (snapshotIdInheritanceEnabled && manifest.snapshotId() == null) {
       appendedManifestsSummary.addedManifest(manifest);
       appendManifests.add(manifest);
+      if (partitionStatsMap != null) {
+        partitionStatsMap.put(
+            GenericManifestFile.copyOf(manifest).withSnapshotId(snapshotId()).build(), ops.io());
+      }
     } else {
       // the manifest must be rewritten with this update's snapshot ID
       ManifestFile copiedManifest = copyManifest(manifest);
       rewrittenAppendManifests.add(copiedManifest);
+      if (partitionStatsMap != null) {
+        partitionStatsMap.put(copiedManifest, ops.io());
+      }
     }
   }
 
@@ -1048,9 +1064,58 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
     return cachedNewDeleteManifests;
   }
 
+  @Override
+  protected String getUpdatedPartitionStatsLocation(Snapshot snapshot) {
+    PartitionStatsMap deletePartitionStatsMap = filterManager.getPartitionStatsMap();
+    PartitionsTable.PartitionMap deletePartitionMap =
+        deletePartitionStatsMap.getOrCreatePartitionMap();
+
+    PartitionsTable.PartitionMap partitionMap = partitionStatsMap.getOrCreatePartitionMap();
+    // update the snapshot ID and snapshot created time for the current snapshot.
+    partitionMap
+        .all()
+        .forEach(
+            partition -> {
+              partition.setLastUpdatedAt(snapshot.timestampMillis() * 1000L);
+              partition.setLastUpdatedSnapshotId(snapshot.snapshotId());
+            });
+
+    // get entries from base snapshot and add to current snapshot's entries
+    try (CloseableIterable<Partition> recordIterator =
+        getPartitionStatsEntriesFromParentSnapshot()) {
+      recordIterator.forEach(
+          partition -> partitionMap.get(partition.partitionData()).add(partition));
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+
+    // remove deleted entries from the current snapshot
+    deletePartitionMap
+        .all()
+        .forEach(
+            partition -> {
+              partition.setLastUpdatedSnapshotId(snapshot.snapshotId());
+              partition.setLastUpdatedAt(snapshot.timestampMillis() * 1000L);
+              partitionMap.get(partition.partitionData()).subtract(partition);
+            });
+
+    if (partitionMap.isEmpty()) {
+      // Few existing testcases uses a DataFile without partition info on a partition table.
+      return null;
+    }
+
+    OutputFile outputFile = newPartitionStatsFile();
+    writePartitionStatsEntries(partitionMap.all(), outputFile);
+
+    return outputFile.location();
+  }
+
   private class DataFileFilterManager extends ManifestFilterManager<DataFile> {
     private DataFileFilterManager() {
-      super(ops.current().specsById(), MergingSnapshotProducer.this::workerPool);
+      super(
+          ops.current().specsById(),
+          MergingSnapshotProducer.this::workerPool,
+          writePartitionStats());
     }
 
     @Override
@@ -1103,7 +1168,10 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
 
   private class DeleteFileFilterManager extends ManifestFilterManager<DeleteFile> {
     private DeleteFileFilterManager() {
-      super(ops.current().specsById(), MergingSnapshotProducer.this::workerPool);
+      super(
+          ops.current().specsById(),
+          MergingSnapshotProducer.this::workerPool,
+          writePartitionStats());
     }
 
     @Override
