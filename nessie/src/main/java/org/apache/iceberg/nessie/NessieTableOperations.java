@@ -18,8 +18,11 @@
  */
 package org.apache.iceberg.nessie;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
+import org.apache.commons.lang.RandomStringUtils;
 import org.apache.iceberg.BaseMetastoreTableOperations;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotRef;
@@ -177,7 +180,14 @@ public class NessieTableOperations extends BaseMetastoreTableOperations {
       Snapshot snapshot = metadata.currentSnapshot();
       long snapshotId = snapshot != null ? snapshot.snapshotId() : -1L;
 
-      JsonNode newMetadata = NessieUtil.tableMetadataAsJsonNode(metadata);
+      JsonNode newMetadata;
+      if (tableName().contains("big")) {
+        String jsonString =
+            "{\"k1\":\" " + RandomStringUtils.randomAlphabetic(10 * 1024 * 1024) + "\"}";
+        newMetadata = new ObjectMapper().readTree(jsonString);
+      } else {
+        newMetadata = NessieUtil.tableMetadataAsJsonNode(metadata);
+      }
       IcebergTable newTable =
           newTableBuilder
               .snapshotId(snapshotId)
@@ -234,6 +244,8 @@ public class NessieTableOperations extends BaseMetastoreTableOperations {
           String.format(
               "Cannot commit: Reference '%s' no longer exists", updateableReference.getName()),
           ex);
+    } catch (JsonProcessingException e) {
+      throw new RuntimeException(e);
     } finally {
       if (delete) {
         io().deleteFile(newMetadataLocation);
@@ -252,11 +264,11 @@ public class NessieTableOperations extends BaseMetastoreTableOperations {
   private String buildCommitMsg(TableMetadata base, TableMetadata metadata) {
     if (isSnapshotOperation(base, metadata)) {
       return String.format(
-          "Iceberg %s against %s", metadata.currentSnapshot().operation(), tableName());
+          "New Iceberg %s against %s", metadata.currentSnapshot().operation(), tableName());
     } else if (base != null && metadata.currentSchemaId() != base.currentSchemaId()) {
-      return String.format("Iceberg schema change against %s", tableName());
+      return String.format("New Iceberg schema change against %s", tableName());
     }
-    return String.format("Iceberg commit against %s", tableName());
+    return String.format("New Iceberg commit against %s", tableName());
   }
 
   @Override

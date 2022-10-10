@@ -70,7 +70,7 @@ public class TestNessieTable extends BaseTestIceberg {
   private static final String BRANCH = "iceberg-table-test";
 
   private static final String DB_NAME = "db";
-  private static final String TABLE_NAME = "tbl";
+  private static final String TABLE_NAME = "bigtbl";
   private static final TableIdentifier TABLE_IDENTIFIER = TableIdentifier.of(DB_NAME, TABLE_NAME);
   private static final ContentKey KEY = ContentKey.of(DB_NAME, TABLE_NAME);
   private static final Schema schema =
@@ -207,6 +207,7 @@ public class TestNessieTable extends BaseTestIceberg {
     Assertions.assertThat(metadataVersionFiles(tableName)).isNotNull().hasSize(2);
     Assertions.assertThat(manifestFiles(tableName)).isNotNull().isEmpty();
 
+    // tried this testcase in debug mode
     verifyCommitMetadata();
   }
 
