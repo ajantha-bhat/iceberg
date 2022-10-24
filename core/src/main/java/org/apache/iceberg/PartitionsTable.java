@@ -111,7 +111,9 @@ public class PartitionsTable extends BaseMetadataTable {
               specId -> normalizedPositions(table, specId, normalizedPartitionType));
       PartitionData normalized =
           normalizePartition(original, normalizedPartitionType, normalizedPositions);
-      partitions.get(normalized).update(task.file());
+      Partition partition = partitions.get(normalized);
+      partition.update(task.file());
+      task.deletes().forEach(partition::update);
     }
     return partitions.all();
   }
@@ -237,6 +239,15 @@ public class PartitionsTable extends BaseMetadataTable {
       this.recordCount += file.recordCount();
       this.fileCount += 1;
       this.specId = file.specId();
+    }
+
+    void update(DeleteFile file) {
+      if (file.content().equals(FileContent.POSITION_DELETES)) {
+        this.recordCount -= file.recordCount();
+        // TODO: Unless we have record count per filename, we cant decrement file count?
+        this.specId = file.specId();
+      }
+      // TODO: equality deletes
     }
   }
 }

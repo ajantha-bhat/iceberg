@@ -198,13 +198,15 @@ public class TestMetadataTables extends SparkExtensionsTestBase {
         filesTableSchema.asStruct(), expectedDataFiles.get(0), actualDataFiles.get(0));
 
     List<Row> actualPartitionsWithProjection =
-        spark.sql("SELECT file_count FROM " + tableName + ".partitions ").collectAsList();
+        spark.sql("SELECT record_count,file_count FROM " + tableName + ".partitions ").collectAsList();
     Assert.assertEquals(
         "Metadata table should return two partitions record",
         2,
         actualPartitionsWithProjection.size());
     for (int i = 0; i < 2; ++i) {
-      Assert.assertEquals(1, actualPartitionsWithProjection.get(i).get(0));
+      // previously record_count was never decremented for row level deletes
+      Assert.assertEquals(1L, actualPartitionsWithProjection.get(i).getLong(0));
+      Assert.assertEquals(1, actualPartitionsWithProjection.get(i).getInt(1));
     }
 
     // Check files table
