@@ -44,6 +44,13 @@ body:
     validations:
       required: false
   - type: textarea
+  attributes:
+    label: Query engine version
+    description: >
+      Please describe the Query engine version used.
+  validations:
+    required: true
+  - type: textarea
     attributes:
       label: Please describe the bug 🐞
       description: >
