@@ -108,6 +108,7 @@ public class TestRewriteDataFilesProcedure extends SparkExtensionsTestBase {
 
     List<Object[]> actualRecords = currentData();
     assertEquals("Data after compaction should not change", expectedRecords, actualRecords);
+    //validated the path here.
   }
 
   @Test
@@ -588,7 +589,11 @@ public class TestRewriteDataFilesProcedure extends SparkExtensionsTestBase {
   }
 
   private void createTable() {
-    sql("CREATE TABLE %s (c1 int, c2 string, c3 string) USING iceberg", tableName);
+    sql(
+        "CREATE TABLE %s (c1 int, c2 string, c3 string) USING iceberg OPTIONS ("
+            + "  'write.location-provider.impl'='org.apache.iceberg.CustomLocationProvider'"
+            + ")",
+        tableName);
   }
 
   private void createPartitionTable() {
