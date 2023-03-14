@@ -671,6 +671,7 @@ Table metadata consists of the following fields:
 | _optional_ | _required_ | **`default-sort-order-id`**| Default sort order id of the table. Note that this could be used by writers, but is not used when reading because reads use the specs stored in manifest files. |
 |            | _optional_ | **`refs`** | A map of snapshot references. The map keys are the unique snapshot reference names in the table, and the map values are snapshot reference objects. There is always a `main` branch reference pointing to the `current-snapshot-id` even if the `refs` map is null. |
 | _optional_ | _optional_ | **`statistics`** | A list (optional) of [table statistics](#table-statistics). |
+| _optional_ | _optional_ | **`partition-statistics`**  | A list (optional) of [partition statistics](#partition-statistics). |
 
 For serialization details, see Appendix C.
 
@@ -700,6 +701,21 @@ Blob metadata is a struct with the following fields:
 | _required_ | _required_ | **`sequence-number`** | `long` | Sequence number of the Iceberg table's snapshot the blob was computed from. |
 | _required_ | _required_ | **`fields`** | `list<integer>` | Ordered list of fields, given by field ID, on which the statistic was calculated. |
 | _optional_ | _optional_ | **`properties`** | `map<string, string>` | Additional properties associated with the statistic. Subset of Blob properties in the Puffin file. |
+
+
+#### Partition statistics
+
+Partition statistics files are the valid files based on [Partition statistics spec](../partition-statistics-spec). Partition statistics are informational. A reader can choose to
+ignore partition statistics information. Partition statistics support is not required to read the table correctly. A table can contain
+many partition statistics files associated with different table snapshots.
+
+Partition statistics files metadata within `partition-statistics` table metadata field is a struct with the following fields:
+
+| v1 | v2 | Field name                 | Type     | Description                                                                                           |
+|----|----|----------------------------|----------|-------------------------------------------------------------------------------------------------------|
+| _required_ | _required_ | **`snapshot-id`**          | `long`   | ID of the Iceberg table's snapshot the partition statistics file is associated with.                  |
+| _required_ | _required_ | **`statistics-file-path`** | `string` | Path of the partition statistics file. See [Partition statistics spec](../partition-statistics-spec). |
+| _required_ | _required_ | **`sequence-number`**      | `long`   | Sequence number of the Iceberg table's snapshot the partition statistics was computed from.           |
 
 
 #### Commit Conflict Resolution and Retry
