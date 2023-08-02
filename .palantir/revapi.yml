@@ -784,6 +784,9 @@ acceptedBreaks:
     - code: "java.method.addedToInterface"
       new: "method org.apache.iceberg.catalog.Namespace org.apache.iceberg.view.ViewVersion::defaultNamespace()"
       justification: "Acceptable break due to updating View APIs and the View Spec"
+    - code: "java.method.addedToInterface"
+      new: "method java.util.List<org.apache.iceberg.PartitionStatisticsFile> org.apache.iceberg.Table::partitionStatisticsFiles()"
+      justification: "Added interfaces for partition stats"
     - code: "java.method.numberOfParametersChanged"
       old: "method org.apache.iceberg.view.ViewBuilder org.apache.iceberg.view.ViewBuilder::withQuery(java.lang.String)"
       new: "method T org.apache.iceberg.view.VersionBuilder<T>::withQuery(java.lang.String,\
