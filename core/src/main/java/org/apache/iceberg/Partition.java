@@ -278,6 +278,10 @@ public class Partition implements IndexedRecord {
   }
 
   public static org.apache.iceberg.Schema icebergSchema(Types.StructType partitionType) {
+    if (partitionType.fields().isEmpty()) {
+      throw new IllegalArgumentException("getting schema for an unpartitioned table");
+    }
+
     return new org.apache.iceberg.Schema(
         Types.NestedField.required(1, Column.PARTITION_DATA.name(), partitionType),
         Types.NestedField.required(2, Column.SPEC_ID.name(), Types.IntegerType.get()),
