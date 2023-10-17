@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg.nessie;
 
-import static org.apache.iceberg.TableMetadataParser.getFileExtension;
 import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 
@@ -28,10 +27,8 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -45,7 +42,6 @@ import org.apache.iceberg.ManifestFile;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
-import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.avro.AvroSchemaUtil;
@@ -487,7 +483,8 @@ public class TestNessieTable extends BaseTestIceberg {
     Assertions.assertThatThrownBy(
             () -> catalog.registerTable(tagIdentifier, "file:" + metadataVersionFiles.get(0)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("You can only mutate tables when using a branch without a hash or timestamp.");
+        .hasMessage(
+            "You can only mutate contents when using a branch without a hash or timestamp.");
     // Case 4: non-null metadata path with null metadata location
     Assertions.assertThatThrownBy(
             () ->
@@ -670,27 +667,8 @@ public class TestNessieTable extends BaseTestIceberg {
     return temp.toUri() + DB_NAME + "/" + tableName;
   }
 
-  @SuppressWarnings(
-      "RegexpSinglelineJava") // respecting this rule requires a lot more lines of code
-  private List<String> metadataFiles(String tablePath) {
-    return Arrays.stream(
-            Objects.requireNonNull(new File((tablePath + "/" + "metadata")).listFiles()))
-        .map(File::getAbsolutePath)
-        .collect(Collectors.toList());
-  }
-
-  protected List<String> metadataVersionFiles(String tablePath) {
-    return filterByExtension(tablePath, getFileExtension(TableMetadataParser.Codec.NONE));
-  }
-
   protected List<String> manifestFiles(String tablePath) {
     return filterByExtension(tablePath, ".avro");
-  }
-
-  private List<String> filterByExtension(String tablePath, String extension) {
-    return metadataFiles(tablePath).stream()
-        .filter(f -> f.endsWith(extension))
-        .collect(Collectors.toList());
   }
 
   private static String addRecordsToFile(Table table, String filename) throws IOException {

@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nullable;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.SnapshotRef;
@@ -29,10 +30,24 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.CommitStateUnknownException;
+import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
+import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.exceptions.NoSuchViewException;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.projectnessie.client.http.HttpClientException;
+import org.projectnessie.error.NessieBadRequestException;
+import org.projectnessie.error.NessieConflictException;
+import org.projectnessie.error.NessieNotFoundException;
+import org.projectnessie.error.NessieReferenceConflictException;
+import org.projectnessie.error.ReferenceConflicts;
 import org.projectnessie.model.CommitMeta;
+import org.projectnessie.model.Conflict;
 import org.projectnessie.model.ContentKey;
 import org.projectnessie.model.IcebergTable;
 import org.projectnessie.model.ImmutableCommitMeta;
@@ -164,5 +179,84 @@ public final class NessieUtil {
         reference);
 
     return builder.discardChanges().build();
+  }
+
+  static void handleExceptionsForCommits(
+      Exception exception, String refName, AtomicBoolean failure) {
+    if (exception instanceof NessieConflictException) {
+      failure.set(true);
+      if (exception instanceof NessieReferenceConflictException) {
+        // Throws a specialized exception, if possible
+        NessieUtil.maybeThrowSpecializedException(
+            (NessieReferenceConflictException) exception, false);
+      }
+
+      throw new CommitFailedException(
+          exception,
+          "Cannot commit: Reference hash is out of date. "
+              + "Update the reference '%s' and try again",
+          refName);
+    }
+
+    if (exception instanceof NessieNotFoundException) {
+      failure.set(true);
+      throw new RuntimeException(
+          String.format("Cannot commit: Reference '%s' no longer exists", refName), exception);
+    }
+
+    if (exception instanceof NessieBadRequestException) {
+      failure.set(true);
+      throw new RuntimeException(
+          String.format("Cannot commit: Reference '%s' no longer exists", refName), exception);
+    }
+
+    if (exception instanceof HttpClientException) {
+      // Intentionally catch all nessie-client-exceptions here and not just the "timeout" variant
+      // to catch all kinds of network errors (e.g. connection reset). Network code implementation
+      // details and all kinds of network devices can induce unexpected behavior. So better be
+      // safe than sorry.
+      throw new CommitStateUnknownException(exception);
+    }
+  }
+
+  private static void maybeThrowSpecializedException(
+      NessieReferenceConflictException ex, boolean isView) {
+    // Check if the server returned 'ReferenceConflicts' information
+    ReferenceConflicts referenceConflicts = ex.getErrorDetails();
+    if (referenceConflicts == null) {
+      return;
+    }
+
+    // Can only narrow down to a single exception, if there is only one conflict.
+    List<Conflict> conflicts = referenceConflicts.conflicts();
+    if (conflicts.size() != 1) {
+      return;
+    }
+
+    String contentType = isView ? "View" : "Table";
+
+    Conflict conflict = conflicts.get(0);
+    Conflict.ConflictType conflictType = conflict.conflictType();
+    if (conflictType != null) {
+      switch (conflictType) {
+        case NAMESPACE_ABSENT:
+          throw new NoSuchNamespaceException(ex, "Namespace does not exist: %s", conflict.key());
+        case NAMESPACE_NOT_EMPTY:
+          throw new NamespaceNotEmptyException(ex, "Namespace not empty: %s", conflict.key());
+        case KEY_DOES_NOT_EXIST:
+          if (isView) {
+            throw new NoSuchViewException(ex, "%s does not exist: %s", contentType, conflict.key());
+          } else {
+            throw new NoSuchTableException(
+                ex, "%s does not exist: %s", contentType, conflict.key());
+          }
+        case KEY_EXISTS:
+          throw new AlreadyExistsException(
+              ex, "%s already exists: %s", contentType, conflict.key());
+        default:
+          // Explicit fall-through
+          break;
+      }
+    }
   }
 }

@@ -481,7 +481,8 @@ public class TestBranchVisibility extends BaseTestIceberg {
     // updates should not be possible
     Assertions.assertThatThrownBy(() -> catalogAtHash2.createTable(identifier, schema))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("You can only mutate tables when using a branch without a hash or timestamp.");
+        .hasMessage(
+            "You can only mutate contents when using a branch without a hash or timestamp.");
     Assertions.assertThat(catalogAtHash2.listTables(namespaceAB)).isEmpty();
 
     // updates should be still possible here

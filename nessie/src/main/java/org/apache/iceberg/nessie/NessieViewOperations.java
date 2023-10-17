@@ -20,12 +20,13 @@ package org.apache.iceberg.nessie;
 
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.apache.iceberg.BaseMetastoreTableOperations;
-import org.apache.iceberg.TableMetadata;
-import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
-import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.exceptions.NoSuchViewException;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.view.BaseViewOperations;
+import org.apache.iceberg.view.ViewMetadata;
+import org.apache.iceberg.view.ViewMetadataParser;
 import org.projectnessie.client.http.HttpClientException;
 import org.projectnessie.error.NessieBadRequestException;
 import org.projectnessie.error.NessieConflictException;
@@ -38,27 +39,18 @@ import org.projectnessie.model.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Nessie implementation of Iceberg TableOperations. */
-public class NessieTableOperations extends BaseMetastoreTableOperations {
+public class NessieViewOperations extends BaseViewOperations {
 
-  private static final Logger LOG = LoggerFactory.getLogger(NessieTableOperations.class);
-
-  /**
-   * Name of the `{@link TableMetadata} property that holds the Nessie commit-ID from which the
-   * metadata has been loaded.
-   */
-  public static final String NESSIE_COMMIT_ID_PROPERTY = "nessie.commit.id";
-
-  public static final String NESSIE_GC_NO_WARNING_PROPERTY = "nessie.gc.no-warning";
+  private static final Logger LOG = LoggerFactory.getLogger(NessieViewOperations.class);
 
   private final NessieIcebergClient client;
+
   private final ContentKey key;
-  private IcebergTable table;
   private final FileIO fileIO;
   private final Map<String, String> catalogOptions;
+  private IcebergView icebergView;
 
-  /** Create a nessie table operations given a table identifier. */
-  NessieTableOperations(
+  NessieViewOperations(
       ContentKey key,
       NessieIcebergClient client,
       FileIO fileIO,
@@ -70,18 +62,13 @@ public class NessieTableOperations extends BaseMetastoreTableOperations {
   }
 
   @Override
-  protected String tableName() {
-    return key.toString();
-  }
-
-  @Override
-  protected void doRefresh() {
+  public void doRefresh() {
     try {
       client.refresh();
     } catch (NessieNotFoundException e) {
       throw new RuntimeException(
           String.format(
-              "Failed to refresh as ref '%s' " + "is no longer valid.", client.getRef().getName()),
+              "Failed to refresh as ref '%s' is no longer valid.", client.getRef().getName()),
           e);
     }
     String metadataLocation = null;
@@ -91,61 +78,60 @@ public class NessieTableOperations extends BaseMetastoreTableOperations {
       LOG.debug("Content '{}' at '{}': {}", key, reference, content);
       if (content == null) {
         if (currentMetadataLocation() != null) {
-          throw new NoSuchTableException("No such table '%s' in '%s'", key, reference);
+          throw new NoSuchViewException("View does not exist: %s in %s", key, reference);
         }
       } else {
-        this.table =
+        this.icebergView =
             content
-                .unwrap(IcebergTable.class)
+                .unwrap(IcebergView.class)
                 .orElseThrow(
                     () -> {
-                      if (content instanceof IcebergView) {
+                      if (content instanceof IcebergTable) {
                         return new AlreadyExistsException(
-                            "View with same name already exists: %s", key);
+                            "Table with same name already exists: %s in %s", key, reference);
                       } else {
                         return new IllegalStateException(
                             String.format(
-                                "Cannot refresh Iceberg table: "
-                                    + "Nessie points to a non-Iceberg object for path: %s.",
+                                "Cannot refresh Iceberg view: Nessie points to a non-Iceberg object for path: %s.",
                                 key));
                       }
                     });
-        metadataLocation = table.getMetadataLocation();
+        metadataLocation = icebergView.getMetadataLocation();
       }
     } catch (NessieNotFoundException ex) {
       if (currentMetadataLocation() != null) {
-        throw new NoSuchTableException(ex, "No such table '%s'", key);
+        throw new NoSuchViewException("View does not exist: %s in %s", key, reference);
       }
     }
-    refreshFromMetadataLocation(
-        metadataLocation,
-        null,
-        2,
-        location ->
-            NessieUtil.updateTableMetadataWithNessieSpecificProperties(
-                TableMetadataParser.read(fileIO, location),
-                location,
-                table,
-                key.toString(),
-                reference));
+    refreshFromMetadataLocation(metadataLocation, null, 2, l -> loadViewMetadata(l, reference));
+  }
+
+  private ViewMetadata loadViewMetadata(String metadataLocation, Reference reference) {
+    ViewMetadata metadata = ViewMetadataParser.read(io().newInputFile(metadataLocation));
+    Map<String, String> newProperties = Maps.newHashMap(metadata.properties());
+    newProperties.put(NessieTableOperations.NESSIE_COMMIT_ID_PROPERTY, reference.getHash());
+
+    return ViewMetadata.buildFrom(
+            ViewMetadata.buildFrom(metadata).setProperties(newProperties).build())
+        .setMetadataLocation(metadataLocation)
+        .build();
   }
 
   @Override
-  protected void doCommit(TableMetadata base, TableMetadata metadata) {
-    boolean newTable = base == null;
-    String newMetadataLocation = writeNewMetadataIfRequired(newTable, metadata);
+  public void doCommit(ViewMetadata base, ViewMetadata metadata) {
+    String newMetadataLocation = writeNewMetadataIfRequired(metadata);
 
     AtomicBoolean failure = new AtomicBoolean(false);
     try {
-      String contentId = table == null ? null : table.getId();
-      client.commitTable(base, metadata, newMetadataLocation, contentId, key);
-    } catch (NessieConflictException | NessieNotFoundException | HttpClientException ex) {
+      String contentId = icebergView == null ? null : icebergView.getId();
+      client.commitView(base, metadata, newMetadataLocation, contentId, key);
+    } catch (NessieConflictException | HttpClientException | NessieNotFoundException ex) {
       NessieUtil.handleExceptionsForCommits(ex, client.refName(), failure);
     } catch (NessieBadRequestException ex) {
       if (ex.getMessage().contains("New value to update existing key")) {
         failure.set(true);
-        // View might have created with the same name concurrently.
-        throw new AlreadyExistsException(ex, "View with same name already exists: %s", key);
+        // Table might have created with the same name concurrently.
+        throw new AlreadyExistsException(ex, "Table with same name already exists: %s", key);
       }
       throw ex;
     } finally {
@@ -153,6 +139,11 @@ public class NessieTableOperations extends BaseMetastoreTableOperations {
         io().deleteFile(newMetadataLocation);
       }
     }
+  }
+
+  @Override
+  protected String viewName() {
+    return key.toString();
   }
 
   @Override

@@ -24,7 +24,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
-import org.apache.iceberg.BaseMetastoreCatalog;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.TableOperations;
@@ -41,6 +40,8 @@ import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTest
 import org.apache.iceberg.relocated.com.google.common.base.Joiner;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.view.BaseMetastoreViewCatalog;
+import org.apache.iceberg.view.ViewOperations;
 import org.projectnessie.client.NessieClientBuilder;
 import org.projectnessie.client.NessieConfigConstants;
 import org.projectnessie.client.api.NessieApiV1;
@@ -53,7 +54,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Nessie implementation of Iceberg Catalog. */
-public class NessieCatalog extends BaseMetastoreCatalog
+public class NessieCatalog extends BaseMetastoreViewCatalog
     implements AutoCloseable, SupportsNamespaces, Configurable<Object> {
 
   private static final Logger LOG = LoggerFactory.getLogger(NessieCatalog.class);
@@ -346,5 +347,55 @@ public class NessieCatalog extends BaseMetastoreCatalog
   @Override
   protected Map<String, String> properties() {
     return catalogOptions;
+  }
+
+  @Override
+  protected ViewOperations newViewOps(TableIdentifier identifier) {
+    TableReference tr = parseTableReference(identifier);
+    return new NessieViewOperations(
+        ContentKey.of(
+            org.projectnessie.model.Namespace.of(identifier.namespace().levels()), tr.getName()),
+        client.withReference(tr.getReference(), tr.getHash()),
+        fileIO,
+        catalogOptions);
+  }
+
+  @Override
+  public List<TableIdentifier> listViews(Namespace namespace) {
+    return client.listViews(namespace);
+  }
+
+  @Override
+  public boolean dropView(TableIdentifier identifier) {
+    TableReference tableReference = parseTableReference(identifier);
+    return client
+        .withReference(tableReference.getReference(), tableReference.getHash())
+        .dropView(identifierWithoutTableReference(identifier, tableReference), false);
+  }
+
+  @Override
+  public void renameView(TableIdentifier from, TableIdentifier to) {
+    TableReference fromTableReference = parseTableReference(from);
+    TableReference toTableReference = parseTableReference(to);
+    String fromReference =
+        fromTableReference.hasReference()
+            ? fromTableReference.getReference()
+            : client.getRef().getName();
+    String toReference =
+        toTableReference.hasReference()
+            ? toTableReference.getReference()
+            : client.getRef().getName();
+    Preconditions.checkArgument(
+        fromReference.equalsIgnoreCase(toReference),
+        "from: %s and to: %s reference name must be same",
+        fromReference,
+        toReference);
+
+    client
+        .withReference(fromTableReference.getReference(), fromTableReference.getHash())
+        .renameView(
+            identifierWithoutTableReference(from, fromTableReference),
+            NessieUtil.removeCatalogName(
+                identifierWithoutTableReference(to, toTableReference), name()));
   }
 }
