@@ -400,8 +400,15 @@ public abstract class ViewCatalogTests<C extends ViewCatalog & SupportsNamespace
                     .buildTable(viewIdentifier, SCHEMA)
                     .replaceTransaction()
                     .commitTransaction())
-        .isInstanceOf(NoSuchTableException.class)
-        .hasMessageStartingWith("Table does not exist: ns.view");
+        .satisfiesAnyOf(
+            throwable ->
+                assertThat(throwable)
+                    .isInstanceOf(NoSuchTableException.class)
+                    .hasMessageStartingWith("Table does not exist: ns.view"),
+            throwable ->
+                assertThat(throwable)
+                    .isInstanceOf(AlreadyExistsException.class)
+                    .hasMessageContaining("View with same name already exists: ns.view"));
   }
 
   @Test
@@ -465,8 +472,15 @@ public abstract class ViewCatalogTests<C extends ViewCatalog & SupportsNamespace
                     .withDefaultNamespace(tableIdentifier.namespace())
                     .withQuery("spark", "select * from ns.tbl")
                     .replace())
-        .isInstanceOf(NoSuchViewException.class)
-        .hasMessageStartingWith("View does not exist: ns.table");
+        .satisfiesAnyOf(
+            throwable ->
+                assertThat(throwable)
+                    .isInstanceOf(NoSuchViewException.class)
+                    .hasMessageStartingWith("View does not exist: ns.table"),
+            throwable ->
+                assertThat(throwable)
+                    .isInstanceOf(AlreadyExistsException.class)
+                    .hasMessageContaining("Table with same name already exists: ns.table"));
   }
 
   @Test
