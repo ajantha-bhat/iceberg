@@ -140,7 +140,8 @@ public class NessieTableOperations extends BaseMetastoreTableOperations {
       String contentId = table == null ? null : table.getId();
       client.commitTable(base, metadata, newMetadataLocation, contentId, key);
     } catch (NessieConflictException | NessieNotFoundException | HttpClientException ex) {
-      NessieUtil.handleExceptionsForCommits(ex, client.refName(), failure);
+      NessieUtil.handleExceptionsForCommits(
+          ex, client.refName(), failure, Content.Type.ICEBERG_TABLE);
     } catch (NessieBadRequestException ex) {
       if (ex.getMessage().contains("New value to update existing key")) {
         failure.set(true);

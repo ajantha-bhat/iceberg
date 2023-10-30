@@ -44,7 +44,6 @@ public class NessieViewOperations extends BaseViewOperations {
   private static final Logger LOG = LoggerFactory.getLogger(NessieViewOperations.class);
 
   private final NessieIcebergClient client;
-
   private final ContentKey key;
   private final FileIO fileIO;
   private final Map<String, String> catalogOptions;
@@ -126,7 +125,8 @@ public class NessieViewOperations extends BaseViewOperations {
       String contentId = icebergView == null ? null : icebergView.getId();
       client.commitView(base, metadata, newMetadataLocation, contentId, key);
     } catch (NessieConflictException | HttpClientException | NessieNotFoundException ex) {
-      NessieUtil.handleExceptionsForCommits(ex, client.refName(), failure);
+      NessieUtil.handleExceptionsForCommits(
+          ex, client.refName(), failure, Content.Type.ICEBERG_VIEW);
     } catch (NessieBadRequestException ex) {
       if (ex.getMessage().contains("New value to update existing key")) {
         failure.set(true);

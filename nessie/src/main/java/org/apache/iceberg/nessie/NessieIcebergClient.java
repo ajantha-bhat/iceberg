@@ -46,7 +46,6 @@ import org.projectnessie.client.api.NessieApiV1;
 import org.projectnessie.client.api.OnReferenceBuilder;
 import org.projectnessie.client.http.HttpClientException;
 import org.projectnessie.error.BaseNessieClientServerException;
-import org.projectnessie.error.NessieBadRequestException;
 import org.projectnessie.error.NessieConflictException;
 import org.projectnessie.error.NessieNamespaceAlreadyExistsException;
 import org.projectnessie.error.NessieNamespaceNotEmptyException;
@@ -185,21 +184,12 @@ public class NessieIcebergClient implements AutoCloseable {
     return TableIdentifier.of(elements.toArray(new String[elements.size()]));
   }
 
-  public IcebergTable table(TableIdentifier tableIdentifier) {
+  public <C extends IcebergContent> C asContent(
+      TableIdentifier tableIdentifier, Class<? extends C> targetClass) {
     try {
       ContentKey key = NessieUtil.toKey(tableIdentifier);
-      Content table = withReference(api.getContent().key(key)).get().get(key);
-      return table != null ? table.unwrap(IcebergTable.class).orElse(null) : null;
-    } catch (NessieNotFoundException e) {
-      return null;
-    }
-  }
-
-  public IcebergView view(TableIdentifier tableIdentifier) {
-    try {
-      ContentKey key = NessieUtil.toKey(tableIdentifier);
-      Content view = withReference(api.getContent().key(key)).get().get(key);
-      return view != null ? view.unwrap(IcebergView.class).orElse(null) : null;
+      Content content = withReference(api.getContent().key(key)).get().get(key);
+      return content != null ? content.unwrap(targetClass).orElse(null) : null;
     } catch (NessieNotFoundException e) {
       return null;
     }
@@ -337,27 +327,30 @@ public class NessieIcebergClient implements AutoCloseable {
   }
 
   public void renameTable(TableIdentifier from, TableIdentifier to) {
-    renameContent(from, to, false);
+    renameContent(from, to, Content.Type.ICEBERG_TABLE);
   }
 
   public void renameView(TableIdentifier from, TableIdentifier to) {
-    renameContent(from, to, true);
+    renameContent(from, to, Content.Type.ICEBERG_VIEW);
   }
 
-  private void renameContent(TableIdentifier from, TableIdentifier to, boolean isView) {
+  private void renameContent(TableIdentifier from, TableIdentifier to, Content.Type type) {
     getRef().checkMutable();
 
-    String contentType = isView ? "view" : "table";
+    IcebergContent existingFromContent = asContent(from, IcebergContent.class);
+    validateFromContentForRename(from, type, existingFromContent);
 
-    IcebergContent existingFromContent = isView ? view(from) : table(from);
-    validateContentForRename(from, to, isView, existingFromContent);
+    IcebergContent existingToContent = asContent(to, IcebergContent.class);
+    validateToContentForRename(from, to, existingToContent);
 
+    String contentTypeString = type == Content.Type.ICEBERG_VIEW ? "view" : "table";
     CommitMultipleOperationsBuilder operations =
         getApi()
             .commitMultipleOperations()
             .commitMeta(
                 NessieUtil.buildCommitMetadata(
-                    String.format("Iceberg rename %s from '%s' to '%s'", contentType, from, to),
+                    String.format(
+                        "Iceberg rename %s from '%s' to '%s'", contentTypeString, from, to),
                     catalogOptions))
             .operation(Operation.Delete.of(NessieUtil.toKey(from)))
             .operation(Operation.Put.of(NessieUtil.toKey(to), existingFromContent));
@@ -385,13 +378,13 @@ public class NessieIcebergClient implements AutoCloseable {
       throw new RuntimeException(
           String.format(
               "Cannot rename %s '%s' to '%s': ref '%s' no longer exists.",
-              contentType, from, to, getRef().getName()),
+              contentTypeString, from, to, getRef().getName()),
           e);
     } catch (BaseNessieClientServerException e) {
       throw new CommitFailedException(
           e,
           "Cannot rename %s '%s' to '%s': the current reference is not up to date.",
-          contentType,
+          contentTypeString,
           from,
           to);
     } catch (HttpClientException ex) {
@@ -400,18 +393,6 @@ public class NessieIcebergClient implements AutoCloseable {
       // details and all kinds of network devices can induce unexpected behavior. So better be
       // safe than sorry.
       throw new CommitStateUnknownException(ex);
-    } catch (NessieBadRequestException ex) {
-      if (ex.getMessage().contains("already exists with content ID")) {
-        if (isView) {
-          // View might have created with the same name concurrently.
-          throw new AlreadyExistsException(
-              ex, "Cannot rename %s to %s. Table already exists", from, to);
-        } else {
-          throw new AlreadyExistsException(
-              ex, "Cannot rename %s to %s. View already exists", from, to);
-        }
-      }
-      throw ex;
     }
     // Intentionally just "throw through" Nessie's HttpClientException here and do not "special
     // case"
@@ -420,46 +401,55 @@ public class NessieIcebergClient implements AutoCloseable {
     // behavior. So better be safe than sorry.
   }
 
-  private void validateContentForRename(
-      TableIdentifier from,
-      TableIdentifier to,
-      boolean isView,
-      IcebergContent existingFromContent) {
-    if (existingFromContent == null) {
-      if (isView) {
-        throw new NoSuchViewException("View does not exist: %s", from);
+  private static void validateToContentForRename(
+      TableIdentifier from, TableIdentifier to, IcebergContent existingToContent) {
+    if (existingToContent != null) {
+      if (existingToContent.getType() == Content.Type.ICEBERG_VIEW) {
+        throw new AlreadyExistsException("Cannot rename %s to %s. View already exists", from, to);
+      } else if (existingToContent.getType() == Content.Type.ICEBERG_TABLE) {
+        throw new AlreadyExistsException("Cannot rename %s to %s. Table already exists", from, to);
       } else {
-        throw new NoSuchTableException("Table does not exist: %s", from);
+        throw new AlreadyExistsException(
+            "Cannot rename %s to %s. Another content with same name already exists", from, to);
       }
     }
+  }
 
-    IcebergContent existingToContent = isView ? view(to) : table(to);
-    if (existingToContent != null) {
-      if (isView) {
-        throw new AlreadyExistsException("Cannot rename %s to %s. View already exists", from, to);
+  private static void validateFromContentForRename(
+      TableIdentifier from, Content.Type type, IcebergContent existingFromContent) {
+    if (existingFromContent == null) {
+      if (type == Content.Type.ICEBERG_VIEW) {
+        throw new NoSuchViewException("View does not exist: %s", from);
+      } else if (type == Content.Type.ICEBERG_TABLE) {
+        throw new NoSuchTableException("Table does not exist: %s", from);
       } else {
-        throw new AlreadyExistsException("Cannot rename %s to %s. Table already exists", from, to);
+        throw new UnsupportedOperationException("Cannot rename for content type: " + type);
       }
+    } else if (existingFromContent.getType() != type) {
+      throw new UnsupportedOperationException(
+          "content type of from identifier should be of " + type);
     }
   }
 
   public boolean dropTable(TableIdentifier identifier, boolean purge) {
-    return dropContent(identifier, purge, false);
+    return dropContent(identifier, purge, Content.Type.ICEBERG_TABLE);
   }
 
   public boolean dropView(TableIdentifier identifier, boolean purge) {
-    return dropContent(identifier, purge, true);
+    return dropContent(identifier, purge, Content.Type.ICEBERG_VIEW);
   }
 
-  private boolean dropContent(TableIdentifier identifier, boolean purge, boolean isView) {
+  private boolean dropContent(TableIdentifier identifier, boolean purge, Content.Type type) {
     getRef().checkMutable();
 
-    IcebergContent existingContent = isView ? view(identifier) : table(identifier);
+    IcebergContent existingContent =
+        asContent(
+            identifier, type == Content.Type.ICEBERG_VIEW ? IcebergView.class : IcebergTable.class);
     if (existingContent == null) {
       return false;
     }
 
-    String contentType = isView ? "view" : "table";
+    String contentType = type == Content.Type.ICEBERG_VIEW ? "view" : "table";
 
     if (purge) {
       LOG.info(

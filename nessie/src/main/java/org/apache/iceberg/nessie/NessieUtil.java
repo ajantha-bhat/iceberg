@@ -48,6 +48,7 @@ import org.projectnessie.error.NessieReferenceConflictException;
 import org.projectnessie.error.ReferenceConflicts;
 import org.projectnessie.model.CommitMeta;
 import org.projectnessie.model.Conflict;
+import org.projectnessie.model.Content;
 import org.projectnessie.model.ContentKey;
 import org.projectnessie.model.IcebergTable;
 import org.projectnessie.model.ImmutableCommitMeta;
@@ -182,13 +183,13 @@ public final class NessieUtil {
   }
 
   static void handleExceptionsForCommits(
-      Exception exception, String refName, AtomicBoolean failure) {
+      Exception exception, String refName, AtomicBoolean failure, Content.Type type) {
     if (exception instanceof NessieConflictException) {
       failure.set(true);
       if (exception instanceof NessieReferenceConflictException) {
         // Throws a specialized exception, if possible
         NessieUtil.maybeThrowSpecializedException(
-            (NessieReferenceConflictException) exception, false);
+            (NessieReferenceConflictException) exception, type);
       }
 
       throw new CommitFailedException(
@@ -220,7 +221,7 @@ public final class NessieUtil {
   }
 
   private static void maybeThrowSpecializedException(
-      NessieReferenceConflictException ex, boolean isView) {
+      NessieReferenceConflictException ex, Content.Type type) {
     // Check if the server returned 'ReferenceConflicts' information
     ReferenceConflicts referenceConflicts = ex.getErrorDetails();
     if (referenceConflicts == null) {
@@ -233,7 +234,7 @@ public final class NessieUtil {
       return;
     }
 
-    String contentType = isView ? "View" : "Table";
+    String contentType = type == Content.Type.ICEBERG_VIEW ? "View" : "Table";
 
     Conflict conflict = conflicts.get(0);
     Conflict.ConflictType conflictType = conflict.conflictType();
@@ -244,7 +245,7 @@ public final class NessieUtil {
         case NAMESPACE_NOT_EMPTY:
           throw new NamespaceNotEmptyException(ex, "Namespace not empty: %s", conflict.key());
         case KEY_DOES_NOT_EXIST:
-          if (isView) {
+          if (type == Content.Type.ICEBERG_VIEW) {
             throw new NoSuchViewException(ex, "%s does not exist: %s", contentType, conflict.key());
           } else {
             throw new NoSuchTableException(

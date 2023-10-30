@@ -268,7 +268,8 @@ public class TestNessieView extends BaseTestIceberg {
 
     Assertions.assertThatThrownBy(() -> catalog.renameView(fromIdentifier, toIdentifier))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("from: Something and to: iceberg-view-test reference name must be same");
+        .hasMessage(
+            "Reference name of identifiers in from: Something and to: iceberg-table-test must be same for rename operation");
 
     fromTableReference =
         ImmutableTableReference.builder()
@@ -287,7 +288,8 @@ public class TestNessieView extends BaseTestIceberg {
 
     Assertions.assertThatThrownBy(() -> catalog.renameView(fromIdentifierNew, toIdentifierNew))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("from: iceberg-view-test and to: Something reference name must be same");
+        .hasMessage(
+            "Reference name of identifiers in from: iceberg-table-test and to: Something must be same for rename operation");
   }
 
   private void verifyCommitMetadata() throws NessieNotFoundException {

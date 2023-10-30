@@ -48,6 +48,7 @@ import org.projectnessie.client.api.NessieApiV1;
 import org.projectnessie.client.api.NessieApiV2;
 import org.projectnessie.client.config.NessieClientConfigSource;
 import org.projectnessie.client.config.NessieClientConfigSources;
+import org.projectnessie.model.Content;
 import org.projectnessie.model.ContentKey;
 import org.projectnessie.model.TableReference;
 import org.slf4j.Logger;
@@ -245,28 +246,7 @@ public class NessieCatalog extends BaseMetastoreViewCatalog
 
   @Override
   public void renameTable(TableIdentifier from, TableIdentifier to) {
-    TableReference fromTableReference = parseTableReference(from);
-    TableReference toTableReference = parseTableReference(to);
-    String fromReference =
-        fromTableReference.hasReference()
-            ? fromTableReference.getReference()
-            : client.getRef().getName();
-    String toReference =
-        toTableReference.hasReference()
-            ? toTableReference.getReference()
-            : client.getRef().getName();
-    Preconditions.checkArgument(
-        fromReference.equalsIgnoreCase(toReference),
-        "from: %s and to: %s reference name must be same",
-        fromReference,
-        toReference);
-
-    client
-        .withReference(fromTableReference.getReference(), fromTableReference.getHash())
-        .renameTable(
-            identifierWithoutTableReference(from, fromTableReference),
-            NessieUtil.removeCatalogName(
-                identifierWithoutTableReference(to, toTableReference), name()));
+    renameContent(from, to, Content.Type.ICEBERG_TABLE);
   }
 
   @Override
@@ -375,6 +355,10 @@ public class NessieCatalog extends BaseMetastoreViewCatalog
 
   @Override
   public void renameView(TableIdentifier from, TableIdentifier to) {
+    renameContent(from, to, Content.Type.ICEBERG_VIEW);
+  }
+
+  private void renameContent(TableIdentifier from, TableIdentifier to, Content.Type type) {
     TableReference fromTableReference = parseTableReference(from);
     TableReference toTableReference = parseTableReference(to);
     String fromReference =
@@ -387,15 +371,27 @@ public class NessieCatalog extends BaseMetastoreViewCatalog
             : client.getRef().getName();
     Preconditions.checkArgument(
         fromReference.equalsIgnoreCase(toReference),
-        "from: %s and to: %s reference name must be same",
+        "Reference name of identifiers in from: %s and to: %s must be same for rename operation",
         fromReference,
         toReference);
 
-    client
-        .withReference(fromTableReference.getReference(), fromTableReference.getHash())
-        .renameView(
-            identifierWithoutTableReference(from, fromTableReference),
-            NessieUtil.removeCatalogName(
-                identifierWithoutTableReference(to, toTableReference), name()));
+    TableIdentifier fromIdentifier =
+        NessieUtil.removeCatalogName(
+            identifierWithoutTableReference(from, fromTableReference), name());
+    TableIdentifier toIdentifier =
+        NessieUtil.removeCatalogName(identifierWithoutTableReference(to, toTableReference), name());
+
+    if (type == Content.Type.ICEBERG_TABLE) {
+      client
+          .withReference(fromTableReference.getReference(), fromTableReference.getHash())
+          .renameTable(fromIdentifier, toIdentifier);
+    } else if (type == Content.Type.ICEBERG_VIEW) {
+      client
+          .withReference(fromTableReference.getReference(), fromTableReference.getHash())
+          .renameView(fromIdentifier, toIdentifier);
+    } else {
+      throw new UnsupportedOperationException(
+          "Rename is not supported for content type:" + type.name());
+    }
   }
 }
