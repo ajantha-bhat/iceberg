@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.data;
 
+import static org.apache.iceberg.data.PartitionStatsHandler.Column;
 import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,7 +36,7 @@ import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.PartitionStatisticsFile;
-import org.apache.iceberg.PartitionStatsUtil;
+import org.apache.iceberg.PartitionStats;
 import org.apache.iceberg.Partitioning;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
@@ -57,7 +58,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
 @ExtendWith(ParameterizedTestExtension.class)
-public class TestPartitionStatsGenerator {
+public class TestPartitionStatsHandler {
   private static final Schema SCHEMA =
       new Schema(
           optional(1, "c1", Types.IntegerType.get()),
@@ -79,24 +80,18 @@ public class TestPartitionStatsGenerator {
   @Test
   public void testPartitionStatsOnEmptyTable() throws Exception {
     Table testTable = TestTables.create(tempDir("empty_table"), "empty_table", SCHEMA, SPEC, 2);
-
-    PartitionStatsGenerator partitionStatsGenerator = new PartitionStatsGenerator(testTable);
-    assertThat(partitionStatsGenerator.generate()).isNull();
+    assertThat(PartitionStatsHandler.writePartitionStatsFile(testTable)).isNull();
   }
 
   @Test
   public void testPartitionStatsOnEmptyBranch() throws Exception {
     Table testTable = TestTables.create(tempDir("empty_branch"), "empty_branch", SCHEMA, SPEC, 2);
-
     testTable.manageSnapshots().createBranch("b1").commit();
-
-    PartitionStatsGenerator partitionStatsGenerator = new PartitionStatsGenerator(testTable, "b1");
+    PartitionStatisticsFile partitionStatisticsFile =
+        PartitionStatsHandler.writePartitionStatsFile(testTable, "b1");
     // creates an empty stats file since the dummy snapshot exist
-    assertThat(partitionStatsGenerator.generate())
-        .extracting(PartitionStatisticsFile::fileSizeInBytes)
-        .isEqualTo(0L);
-    assertThat(partitionStatsGenerator.generate())
-        .extracting(PartitionStatisticsFile::snapshotId)
+    assertThat(partitionStatisticsFile.fileSizeInBytes()).isEqualTo(0L);
+    assertThat(partitionStatisticsFile.snapshotId())
         .isEqualTo(testTable.refs().get("b1").snapshotId());
   }
 
@@ -104,10 +99,8 @@ public class TestPartitionStatsGenerator {
   public void testPartitionStatsOnInvalidSnapshot() throws Exception {
     Table testTable =
         TestTables.create(tempDir("invalid_snapshot"), "invalid_snapshot", SCHEMA, SPEC, 2);
-
-    PartitionStatsGenerator partitionStatsGenerator =
-        new PartitionStatsGenerator(testTable, "INVALID_BRANCH");
-    assertThatThrownBy(partitionStatsGenerator::generate)
+    assertThatThrownBy(
+            () -> PartitionStatsHandler.writePartitionStatsFile(testTable, "INVALID_BRANCH"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Couldn't find the snapshot for the branch INVALID_BRANCH");
   }
@@ -126,8 +119,7 @@ public class TestPartitionStatsGenerator {
     DataFile dataFile = FileHelpers.writeDataFile(testTable, outputFile(), records);
     testTable.newAppend().appendFile(dataFile).commit();
 
-    PartitionStatsGenerator partitionStatsGenerator = new PartitionStatsGenerator(testTable);
-    assertThatThrownBy(partitionStatsGenerator::generate)
+    assertThatThrownBy(() -> PartitionStatsHandler.writePartitionStatsFile(testTable))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("getting schema for an unpartitioned table");
   }
@@ -170,9 +162,9 @@ public class TestPartitionStatsGenerator {
     }
 
     Snapshot snapshot1 = testTable.currentSnapshot();
-    Schema recordSchema = PartitionStatsUtil.schema(Partitioning.partitionType(testTable));
+    Schema recordSchema = PartitionStatsHandler.schema(Partitioning.partitionType(testTable));
     Types.StructType partitionType =
-        recordSchema.findField(PartitionStatsUtil.Column.PARTITION.name()).type().asStructType();
+        recordSchema.findField(Column.PARTITION.name()).type().asStructType();
     computeAndValidatePartitionStats(
         testTable,
         recordSchema,
@@ -235,9 +227,8 @@ public class TestPartitionStatsGenerator {
     DeleteFile eqDeletes = commitEqualityDeletes(testTable);
     Snapshot snapshot3 = testTable.currentSnapshot();
 
-    recordSchema = PartitionStatsUtil.schema(Partitioning.partitionType(testTable));
-    partitionType =
-        recordSchema.findField(PartitionStatsUtil.Column.PARTITION.name()).type().asStructType();
+    recordSchema = PartitionStatsHandler.schema(Partitioning.partitionType(testTable));
+    partitionType = recordSchema.findField(Column.PARTITION.name()).type().asStructType();
     computeAndValidatePartitionStats(
         testTable,
         recordSchema,
@@ -323,9 +314,9 @@ public class TestPartitionStatsGenerator {
     }
 
     Snapshot snapshot1 = testTable.currentSnapshot();
-    Schema recordSchema = PartitionStatsUtil.schema(Partitioning.partitionType(testTable));
+    Schema recordSchema = PartitionStatsHandler.schema(Partitioning.partitionType(testTable));
     Types.StructType partitionType =
-        recordSchema.findField(PartitionStatsUtil.Column.PARTITION.name()).type().asStructType();
+        recordSchema.findField(Column.PARTITION.name()).type().asStructType();
 
     computeAndValidatePartitionStats(
         testTable,
@@ -390,9 +381,8 @@ public class TestPartitionStatsGenerator {
         .commit();
 
     Snapshot snapshot2 = testTable.currentSnapshot();
-    recordSchema = PartitionStatsUtil.schema(Partitioning.partitionType(testTable));
-    partitionType =
-        recordSchema.findField(PartitionStatsUtil.Column.PARTITION.name()).type().asStructType();
+    recordSchema = PartitionStatsHandler.schema(Partitioning.partitionType(testTable));
+    partitionType = recordSchema.findField(Column.PARTITION.name()).type().asStructType();
     computeAndValidatePartitionStats(
         testTable,
         recordSchema,
@@ -515,32 +505,31 @@ public class TestPartitionStatsGenerator {
       Table testTable, Schema recordSchema, Tuple... expectedValues) throws IOException {
     // compute and commit partition stats file
     Snapshot currentSnapshot = testTable.currentSnapshot();
-    PartitionStatsGenerator partitionStatsGenerator = new PartitionStatsGenerator(testTable);
-    PartitionStatisticsFile result = partitionStatsGenerator.generate();
+    PartitionStatisticsFile result = PartitionStatsHandler.writePartitionStatsFile(testTable);
     testTable.updatePartitionStatistics().setPartitionStatistics(result).commit();
     assertThat(result.snapshotId()).isEqualTo(currentSnapshot.snapshotId());
 
     // read the partition entries from the stats file
-    List<Record> rows;
-    try (CloseableIterable<Record> recordIterator =
-        PartitionStatsGeneratorUtil.readPartitionStatsFile(
+    List<PartitionStats> partitionStats;
+    try (CloseableIterable<PartitionStats> recordIterator =
+        PartitionStatsHandler.readPartitionStatsFile(
             recordSchema, Files.localInput(result.path()))) {
-      rows = Lists.newArrayList(recordIterator);
+      partitionStats = Lists.newArrayList(recordIterator);
     }
-    assertThat(rows)
+    assertThat(partitionStats)
         .extracting(
-            row -> row.get(PartitionStatsUtil.Column.PARTITION.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.SPEC_ID.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.DATA_RECORD_COUNT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.DATA_FILE_COUNT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.TOTAL_DATA_FILE_SIZE_IN_BYTES.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.POSITION_DELETE_RECORD_COUNT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.POSITION_DELETE_FILE_COUNT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.EQUALITY_DELETE_RECORD_COUNT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.EQUALITY_DELETE_FILE_COUNT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.TOTAL_RECORD_COUNT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.LAST_UPDATED_AT.ordinal()),
-            row -> row.get(PartitionStatsUtil.Column.LAST_UPDATED_SNAPSHOT_ID.ordinal()))
+            PartitionStats::partition,
+            PartitionStats::specId,
+            PartitionStats::dataRecordCount,
+            PartitionStats::dataFileCount,
+            PartitionStats::totalDataFileSizeInBytes,
+            PartitionStats::positionDeleteRecordCount,
+            PartitionStats::positionDeleteFileCount,
+            PartitionStats::equalityDeleteRecordCount,
+            PartitionStats::equalityDeleteFileCount,
+            PartitionStats::totalRecordCount,
+            PartitionStats::lastUpdatedAt,
+            PartitionStats::lastUpdatedSnapshotId)
         .containsExactlyInAnyOrder(expectedValues);
   }
 
