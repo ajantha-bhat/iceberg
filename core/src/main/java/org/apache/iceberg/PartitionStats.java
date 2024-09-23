@@ -18,11 +18,13 @@
  */
 package org.apache.iceberg;
 
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+
 public class PartitionStats implements StructLike {
 
   private static final int STATS_COUNT = 12;
 
-  private PartitionData partition;
+  private StructLike partition;
   private int specId;
   private long dataRecordCount;
   private int dataFileCount;
@@ -35,12 +37,12 @@ public class PartitionStats implements StructLike {
   private Long lastUpdatedAt; // null by default
   private Long lastUpdatedSnapshotId; // null by default
 
-  public PartitionStats(PartitionData partition, int specId) {
+  public PartitionStats(StructLike partition, int specId) {
     this.partition = partition;
     this.specId = specId;
   }
 
-  public PartitionData partition() {
+  public StructLike partition() {
     return partition;
   }
 
@@ -95,7 +97,7 @@ public class PartitionStats implements StructLike {
    * @param snapshot the snapshot corresponding to the live entry.
    */
   public void liveEntry(ContentFile<?> file, Snapshot snapshot) {
-    this.specId = Math.max(this.specId, file.specId());
+    Preconditions.checkArgument(specId == file.specId(), "Spec IDs must match");
 
     switch (file.content()) {
       case DATA:
@@ -139,7 +141,8 @@ public class PartitionStats implements StructLike {
    * @param entry the entry from which statistics will be sourced.
    */
   public void appendStats(PartitionStats entry) {
-    this.specId = Math.max(specId, entry.specId);
+    Preconditions.checkArgument(specId == entry.specId(), "Spec IDs must match");
+
     this.dataRecordCount += entry.dataRecordCount;
     this.dataFileCount += entry.dataFileCount;
     this.totalDataFileSizeInBytes += entry.totalDataFileSizeInBytes;
@@ -155,7 +158,7 @@ public class PartitionStats implements StructLike {
   }
 
   private void updateSnapshotInfo(long snapshotId, long updatedAt) {
-    if (lastUpdatedAt == null || (lastUpdatedAt < updatedAt)) {
+    if (lastUpdatedAt == null || lastUpdatedAt < updatedAt) {
       this.lastUpdatedAt = updatedAt;
       this.lastUpdatedSnapshotId = snapshotId;
     }
@@ -202,7 +205,7 @@ public class PartitionStats implements StructLike {
   public <T> void set(int pos, T value) {
     switch (pos) {
       case 0:
-        this.partition = (PartitionData) value;
+        this.partition = (StructLike) value;
         break;
       case 1:
         this.specId = (int) value;

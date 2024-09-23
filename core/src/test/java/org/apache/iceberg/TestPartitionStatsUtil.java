@@ -24,9 +24,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.StructProjection;
 import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -355,17 +357,23 @@ public class TestPartitionStatsUtil {
             snapshot2.snapshotId()));
   }
 
-  private static PartitionData partitionData(Types.StructType partitionType, String c2, String c3) {
+  private static StructProjection partitionData(Types.StructType partitionType, String c2, String c3) {
     PartitionData partitionData = new PartitionData(partitionType);
     partitionData.set(0, c2);
     partitionData.set(1, c3);
-    return partitionData;
+
+    StructProjection projection = StructProjection.create(partitionType, partitionType);
+    projection.wrap(partitionData);
+    return projection;
   }
 
-  private static PartitionData partitionData(Types.StructType partitionType, String c2) {
+  private static StructProjection partitionData(Types.StructType partitionType, String c2) {
     PartitionData partitionData = new PartitionData(partitionType);
     partitionData.set(0, c2);
-    return partitionData;
+
+    StructProjection projection = StructProjection.create(partitionType, partitionType);
+    projection.wrap(partitionData);
+    return projection;
   }
 
   private static List<DataFile> prepareDataFiles(Table table) {
@@ -388,7 +396,7 @@ public class TestPartitionStatsUtil {
 
   private static void computeAndValidatePartitionStats(Table testTable, Tuple... expectedValues) {
     // compute and commit partition stats file
-    Iterable<PartitionStats> result =
+    Collection<PartitionStats> result =
         PartitionStatsUtil.computeStats(testTable, testTable.currentSnapshot());
 
     assertThat(result)
