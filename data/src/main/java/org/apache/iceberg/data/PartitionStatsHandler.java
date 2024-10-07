@@ -60,6 +60,7 @@ import org.apache.iceberg.types.Types.LongType;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.util.SnapshotUtil;
+import org.apache.iceberg.util.StructProjection;
 
 /**
  * Computes, writes and reads the {@link PartitionStatisticsFile}. Uses generic readers and writers
@@ -150,20 +151,20 @@ public final class PartitionStatsHandler {
 
     Collection<PartitionStats> stats = PartitionStatsUtil.computeStats(table, currentSnapshot);
     List<PartitionStats> sortedStats = PartitionStatsUtil.sortStats(stats, partitionType);
-    Iterator<PartitionStatsRecord> convertedRecords = statsToRecords(sortedStats, schema);
+    Iterator<PartitionStats> convertedRecords = statsToRecords(sortedStats, schema);
     return writePartitionStatsFile(table, currentSnapshot.snapshotId(), schema, convertedRecords);
   }
 
   @VisibleForTesting
   static PartitionStatisticsFile writePartitionStatsFile(
-      Table table, long snapshotId, Schema dataSchema, Iterator<PartitionStatsRecord> records) {
+      Table table, long snapshotId, Schema dataSchema, Iterator<PartitionStats> records) {
     OutputFile outputFile = newPartitionStatsFile(table, snapshotId);
-    FileWriterFactory<Record> factory =
-        GenericFileWriterFactory.builderFor(table)
+    FileWriterFactory<StructLike> factory =
+            GenericInternalFileWriterFactory.builderFor(table)
             .dataSchema(dataSchema)
             .dataFileFormat(fileFormat(outputFile.location()))
             .build();
-    DataWriter<Record> writer =
+    DataWriter<StructLike> writer =
         factory.newDataWriter(
             EncryptedFiles.encryptedOutput(outputFile, EncryptionKeyMetadata.EMPTY),
             PartitionSpec.unpartitioned(),
@@ -187,7 +188,7 @@ public final class PartitionStatsHandler {
    * @param schema The {@link Schema} of the partition statistics file.
    * @param inputFile An {@link InputFile} pointing to the partition stats file.
    */
-  public static CloseableIterable<PartitionStatsRecord> readPartitionStatsFile(
+  public static CloseableIterable<PartitionStats> readPartitionStatsFile(
       Schema schema, InputFile inputFile) {
     CloseableIterable<Record> records;
     FileFormat fileFormat = fileFormat(inputFile.location());
@@ -235,7 +236,7 @@ public final class PartitionStatsHandler {
                     fileFormat.addExtension(String.format("partition-stats-%d", snapshotId))));
   }
 
-  private static PartitionStatsRecord recordToPartitionStatsRecord(Record record) {
+  private static PartitionStats recordToPartitionStatsRecord(Record record) {
     PartitionStats stats =
         new PartitionStats(
             record.get(Column.PARTITION.id(), StructLike.class),
@@ -264,44 +265,42 @@ public final class PartitionStatsHandler {
         Column.LAST_UPDATED_SNAPSHOT_ID.id(),
         record.get(Column.LAST_UPDATED_SNAPSHOT_ID.id(), Long.class));
 
-    return PartitionStatsRecord.create(record.struct(), stats);
+    return stats;
   }
 
   @VisibleForTesting
-  static Iterator<PartitionStatsRecord> statsToRecords(
+  static Iterator<PartitionStats> statsToRecords(
       List<PartitionStats> stats, Schema recordSchema) {
     StructType partitionType = (StructType) recordSchema.findField(Column.PARTITION.name()).type();
     return new TransformIteratorWithBiFunction<>(
         stats.iterator(),
         (partitionStats, schema) -> {
-          PartitionStatsRecord record = PartitionStatsRecord.create(schema, partitionStats);
-          record.set(
-              Column.PARTITION.id(),
-              convertPartitionValues(
-                  record.get(Column.PARTITION.id(), StructLike.class), partitionType));
-          return record;
+          StructLike partitionValues = convertPartitionValues(
+                  partitionStats.get(0, StructLike.class), partitionType);
+          partitionStats.set(0, partitionValues);
+          return partitionStats;
         },
         recordSchema);
   }
 
-  private static Record convertPartitionValues(
+  private static StructLike convertPartitionValues(
       StructLike partitionRecord, StructType partitionType) {
     if (partitionRecord == null) {
       return null;
     }
 
-    GenericRecord converted = GenericRecord.create(partitionType);
-    for (int index = 0; index < partitionRecord.size(); index++) {
-      Object val = partitionRecord.get(index, Object.class);
+    StructLike struct = ((StructProjection) partitionRecord).unWrap();
+
+    for (int index = 0; index < struct.size(); index++) {
+      Object val = struct.get(index, Object.class);
       if (val != null) {
-        converted.set(
+        struct.set(
             index,
             IdentityPartitionConverters.convertConstant(
                 partitionType.fields().get(index).type(), val));
       }
     }
-
-    return converted;
+    return struct;
   }
 
   private static class TransformIteratorWithBiFunction<T, U, R> implements Iterator<R> {

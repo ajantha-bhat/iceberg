@@ -178,6 +178,10 @@ public class StructProjection implements StructLike {
     return this;
   }
 
+  public StructLike unWrap() {
+    return struct;
+  }
+
   public StructProjection copyFor(StructLike newStruct) {
     return new StructProjection(type, positionMap, nestedProjections).wrap(newStruct);
   }
