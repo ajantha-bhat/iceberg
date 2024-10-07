@@ -25,13 +25,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import org.apache.iceberg.data.GenericRecord;
-import org.apache.iceberg.data.Record;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Queues;
 import org.apache.iceberg.types.Comparators;
-import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.util.PartitionMap;
 import org.apache.iceberg.util.PartitionUtil;
@@ -93,7 +90,7 @@ public class PartitionStatsUtil {
 
       for (ManifestEntry<?> entry : reader.entries()) {
         ContentFile<?> file = entry.file();
-        Record key = coercedPartitionRecord(file, spec, partitionType);
+        StructLike key = PartitionUtil.coercePartition(partitionType, spec, file.partition());
         Snapshot snapshot = table.snapshot(entry.snapshotId());
         PartitionStats stats =
             statsMap.computeIfAbsent(specId, key, () -> new PartitionStats(key, specId));
@@ -132,20 +129,5 @@ public class PartitionStatsUtil {
     }
 
     return statsMap.values();
-  }
-
-  private static Record coercedPartitionRecord(
-      ContentFile<?> file, PartitionSpec spec, StructType partitionType) {
-    // keep the partition data as per the unified spec by coercing
-    StructLike partition = PartitionUtil.coercePartition(partitionType, spec, file.partition());
-
-    GenericRecord record = GenericRecord.create(partitionType);
-    List<Types.NestedField> fields = partitionType.fields();
-    for (int index = 0; index < fields.size(); index++) {
-      Object val = partition.get(index, fields.get(index).type().typeId().javaClass());
-      record.set(index, val);
-    }
-
-    return record;
   }
 }

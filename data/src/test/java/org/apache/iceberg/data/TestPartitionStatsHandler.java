@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
@@ -40,6 +41,7 @@ import org.apache.iceberg.Files;
 import org.apache.iceberg.Parameter;
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
+import org.apache.iceberg.PartitionData;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.PartitionStatisticsFile;
 import org.apache.iceberg.PartitionStats;
@@ -47,6 +49,7 @@ import org.apache.iceberg.Partitioning;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.TestHelpers;
@@ -59,6 +62,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.StructProjection;
 import org.apache.iceberg.util.UUIDUtil;
 import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.Test;
@@ -135,6 +139,8 @@ public class TestPartitionStatsHandler {
         .hasMessage("table must be partitioned");
   }
 
+  // Currently this is failing because we are using PartitionData,
+  // which get method wraps the bytebuffer and unable to work for writers, fixed type.
   @Test
   public void testAllDatatypePartitionWriting() throws Exception {
     Schema schema =
@@ -183,8 +189,7 @@ public class TestPartitionStatsHandler {
     Types.StructType partitionSchema = Partitioning.partitionType(testTable);
     Schema dataSchema = PartitionStatsHandler.schema(partitionSchema);
 
-    Record partitionData =
-        GenericRecord.create(dataSchema.findField(Column.PARTITION.name()).type().asStructType());
+    StructLike partitionData = new PartitionData(partitionSchema);
     partitionData.set(0, true);
     partitionData.set(1, 42);
     partitionData.set(2, 42L);
@@ -194,9 +199,9 @@ public class TestPartitionStatsHandler {
     partitionData.set(
         6, Literal.of("2017-12-01T10:12:55.038194").to(Types.TimestampType.withoutZone()).value());
     partitionData.set(7, "string");
-    partitionData.set(8, UUIDUtil.convertToByteBuffer(UUID.randomUUID()));
-    partitionData.set(9, new byte[] {0, 1, 2, 3, 4, 5, 6});
-    partitionData.set(10, new byte[] {1, 2, 3});
+    partitionData.set(8, UUID.randomUUID());
+    partitionData.set(9, ByteBuffer.wrap(new byte[] {0, 1, 2, 3, 4, 5, 6}));
+    partitionData.set(10, ByteBuffer.wrap(new byte[] {1, 2, 3}));
     partitionData.set(11, Literal.of("123456789").to(Types.DecimalType.of(9, 0)).value());
     partitionData.set(12, Literal.of("1234567.89").to(Types.DecimalType.of(11, 2)).value());
     partitionData.set(
@@ -208,15 +213,13 @@ public class TestPartitionStatsHandler {
     partitionStats.set(Column.DATA_FILE_COUNT.id(), RANDOM.nextInt());
     partitionStats.set(Column.TOTAL_DATA_FILE_SIZE_IN_BYTES.id(), 1024L * RANDOM.nextInt(20));
 
-    Iterator<PartitionStatsRecord> convertedRecords =
-        PartitionStatsHandler.statsToRecords(Collections.singletonList(partitionStats), dataSchema);
-    List<PartitionStatsRecord> expectedRecords = Lists.newArrayList(convertedRecords);
+    List<PartitionStats> expectedRecords = Lists.newArrayList(partitionStats);
     PartitionStatisticsFile statisticsFile =
         PartitionStatsHandler.writePartitionStatsFile(
             testTable, 42L, dataSchema, expectedRecords.iterator());
 
-    List<PartitionStatsRecord> writtenRecords;
-    try (CloseableIterable<PartitionStatsRecord> recordIterator =
+    List<PartitionStats> writtenRecords;
+    try (CloseableIterable<PartitionStats> recordIterator =
         PartitionStatsHandler.readPartitionStatsFile(
             dataSchema, Files.localInput(statisticsFile.path()))) {
       writtenRecords = Lists.newArrayList(recordIterator);
@@ -263,23 +266,20 @@ public class TestPartitionStatsHandler {
       partitionListBuilder.add(stats);
     }
 
-    Iterator<PartitionStatsRecord> convertedRecords =
-        PartitionStatsHandler.statsToRecords(partitionListBuilder.build(), dataSchema);
-
-    List<PartitionStatsRecord> expectedRecords = Lists.newArrayList(convertedRecords);
+    List<PartitionStats> expectedRecords = partitionListBuilder.build();
 
     PartitionStatisticsFile statisticsFile =
         PartitionStatsHandler.writePartitionStatsFile(
             testTable, 42L, dataSchema, expectedRecords.iterator());
 
-    List<PartitionStatsRecord> writtenRecords;
-    try (CloseableIterable<PartitionStatsRecord> recordIterator =
+    List<PartitionStats> writtenRecords;
+    try (CloseableIterable<PartitionStats> recordIterator =
         PartitionStatsHandler.readPartitionStatsFile(
             dataSchema, Files.localInput(statisticsFile.path()))) {
       writtenRecords = Lists.newArrayList(recordIterator);
     }
     assertThat(writtenRecords).isEqualTo(expectedRecords);
-    assertThat(expectedRecords.get(0).unwrap())
+    assertThat(expectedRecords.get(0))
         .extracting(
             PartitionStats::positionDeleteRecordCount,
             PartitionStats::positionDeleteFileCount,
@@ -293,6 +293,9 @@ public class TestPartitionStatsHandler {
                 0L, 0, 0L, 0, 0L, null, null)); // null counters should be initialized to zero.
   }
 
+  // Currently this is failing because we are using PartitionData,
+  // Struct like map is unable to handle it. Only if it is record, it handles well. Outputs only one
+  // key.
   @SuppressWarnings("checkstyle:MethodLength")
   @TestTemplate // Tests for all the table formats (PARQUET, ORC, AVRO)
   public void testPartitionStats() throws Exception {
@@ -459,8 +462,8 @@ public class TestPartitionStatsHandler {
     return Files.localOutput(File.createTempFile("data", null, tempDir("stats")));
   }
 
-  private static Record partitionRecord(Types.StructType partitionType, String c2, String c3) {
-    Record partitionData = GenericRecord.create(partitionType);
+  private static StructLike partitionRecord(Types.StructType partitionType, String c2, String c3) {
+    StructLike partitionData = new PartitionData(partitionType);
     partitionData.set(0, c2);
     partitionData.set(1, c3);
     return partitionData;
@@ -493,14 +496,13 @@ public class TestPartitionStatsHandler {
     assertThat(result.snapshotId()).isEqualTo(currentSnapshot.snapshotId());
 
     // read the partition entries from the stats file
-    List<PartitionStatsRecord> partitionStats;
-    try (CloseableIterable<PartitionStatsRecord> recordIterator =
+    List<PartitionStats> partitionStats;
+    try (CloseableIterable<PartitionStats> recordIterator =
         PartitionStatsHandler.readPartitionStatsFile(
             recordSchema, Files.localInput(result.path()))) {
       partitionStats = Lists.newArrayList(recordIterator);
     }
     assertThat(partitionStats)
-        .extracting(PartitionStatsRecord::unwrap)
         .extracting(
             PartitionStats::partition,
             PartitionStats::specId,

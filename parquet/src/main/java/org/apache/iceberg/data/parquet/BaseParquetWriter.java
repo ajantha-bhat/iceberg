@@ -27,12 +27,16 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import org.apache.directory.api.util.ByteBuffer;
 import org.apache.iceberg.parquet.ParquetTypeVisitor;
 import org.apache.iceberg.parquet.ParquetValueWriter;
 import org.apache.iceberg.parquet.ParquetValueWriters;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.util.UUIDUtil;
 import org.apache.parquet.column.ColumnDescriptor;
+import org.apache.parquet.example.data.simple.LongValue;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
@@ -239,65 +243,77 @@ public abstract class BaseParquetWriter<T> {
         LogicalTypeAnnotation.BsonLogicalTypeAnnotation bsonType) {
       return Optional.of(ParquetValueWriters.byteBuffers(desc));
     }
+
+    @Override
+    public Optional<ParquetValueWriters.PrimitiveWriter<?>> visit(LogicalTypeAnnotation.UUIDLogicalTypeAnnotation uuidLogicalType) {
+      return Optional.of(new UUIDWriter(desc));
+    }
   }
 
-  private static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
-  private static final LocalDate EPOCH_DAY = EPOCH.toLocalDate();
-
-  private static class DateWriter extends ParquetValueWriters.PrimitiveWriter<LocalDate> {
+  private static class DateWriter extends ParquetValueWriters.PrimitiveWriter<Integer> {
     private DateWriter(ColumnDescriptor desc) {
       super(desc);
     }
 
     @Override
-    public void write(int repetitionLevel, LocalDate value) {
-      column.writeInteger(repetitionLevel, (int) ChronoUnit.DAYS.between(EPOCH_DAY, value));
+    public void write(int repetitionLevel, Integer value) {
+      column.writeInteger(repetitionLevel, value);
     }
   }
 
-  private static class TimeWriter extends ParquetValueWriters.PrimitiveWriter<LocalTime> {
+  private static class TimeWriter extends ParquetValueWriters.PrimitiveWriter<Long> {
     private TimeWriter(ColumnDescriptor desc) {
       super(desc);
     }
 
     @Override
-    public void write(int repetitionLevel, LocalTime value) {
-      column.writeLong(repetitionLevel, value.toNanoOfDay() / 1000);
+    public void write(int repetitionLevel, Long value) {
+      column.writeLong(repetitionLevel, value);
     }
   }
 
-  private static class TimestampWriter extends ParquetValueWriters.PrimitiveWriter<LocalDateTime> {
+  private static class TimestampWriter extends ParquetValueWriters.PrimitiveWriter<Long> {
     private TimestampWriter(ColumnDescriptor desc) {
       super(desc);
     }
 
     @Override
-    public void write(int repetitionLevel, LocalDateTime value) {
-      column.writeLong(
-          repetitionLevel, ChronoUnit.MICROS.between(EPOCH, value.atOffset(ZoneOffset.UTC)));
+    public void write(int repetitionLevel, Long value) {
+      column.writeLong(repetitionLevel, value);
     }
   }
 
   private static class TimestamptzWriter
-      extends ParquetValueWriters.PrimitiveWriter<OffsetDateTime> {
+      extends ParquetValueWriters.PrimitiveWriter<Long> {
     private TimestamptzWriter(ColumnDescriptor desc) {
       super(desc);
     }
 
     @Override
-    public void write(int repetitionLevel, OffsetDateTime value) {
-      column.writeLong(repetitionLevel, ChronoUnit.MICROS.between(EPOCH, value));
+    public void write(int repetitionLevel, Long value) {
+      column.writeLong(repetitionLevel, value);
     }
   }
 
-  private static class FixedWriter extends ParquetValueWriters.PrimitiveWriter<byte[]> {
+  private static class FixedWriter extends ParquetValueWriters.PrimitiveWriter<java.nio.ByteBuffer> {
     private FixedWriter(ColumnDescriptor desc) {
       super(desc);
     }
 
     @Override
-    public void write(int repetitionLevel, byte[] value) {
-      column.writeBinary(repetitionLevel, Binary.fromReusedByteArray(value));
+    public void write(int repetitionLevel, java.nio.ByteBuffer value) {
+      column.writeBinary(repetitionLevel, Binary.fromReusedByteArray(value.array()));
+    }
+  }
+
+  private static class UUIDWriter extends ParquetValueWriters.PrimitiveWriter<UUID> {
+    private UUIDWriter(ColumnDescriptor desc) {
+      super(desc);
+    }
+
+    @Override
+    public void write(int repetitionLevel, UUID value) {
+      column.writeBinary(repetitionLevel, Binary.fromReusedByteArray(UUIDUtil.convert(value)));
     }
   }
 }

@@ -27,10 +27,12 @@ import java.io.UncheckedIOException;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BiFunction;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.ImmutableGenericPartitionStatisticsFile;
+import org.apache.iceberg.PartitionData;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.PartitionStatisticsFile;
 import org.apache.iceberg.PartitionStats;
@@ -60,6 +62,7 @@ import org.apache.iceberg.types.Types.LongType;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.util.SnapshotUtil;
+import org.apache.iceberg.util.StructProjection;
 
 /**
  * Computes, writes and reads the {@link PartitionStatisticsFile}. Uses generic readers and writers
@@ -150,20 +153,19 @@ public final class PartitionStatsHandler {
 
     Collection<PartitionStats> stats = PartitionStatsUtil.computeStats(table, currentSnapshot);
     List<PartitionStats> sortedStats = PartitionStatsUtil.sortStats(stats, partitionType);
-    Iterator<PartitionStatsRecord> convertedRecords = statsToRecords(sortedStats, schema);
-    return writePartitionStatsFile(table, currentSnapshot.snapshotId(), schema, convertedRecords);
+    return writePartitionStatsFile(table, currentSnapshot.snapshotId(), schema, sortedStats.iterator());
   }
 
   @VisibleForTesting
   static PartitionStatisticsFile writePartitionStatsFile(
-      Table table, long snapshotId, Schema dataSchema, Iterator<PartitionStatsRecord> records) {
+      Table table, long snapshotId, Schema dataSchema, Iterator<PartitionStats> records) {
     OutputFile outputFile = newPartitionStatsFile(table, snapshotId);
-    FileWriterFactory<Record> factory =
-        GenericFileWriterFactory.builderFor(table)
+    FileWriterFactory<StructLike> factory =
+        GenericStructFileWriterFactory.builderFor(table)
             .dataSchema(dataSchema)
             .dataFileFormat(fileFormat(outputFile.location()))
             .build();
-    DataWriter<Record> writer =
+    DataWriter<StructLike> writer =
         factory.newDataWriter(
             EncryptedFiles.encryptedOutput(outputFile, EncryptionKeyMetadata.EMPTY),
             PartitionSpec.unpartitioned(),
@@ -187,7 +189,7 @@ public final class PartitionStatsHandler {
    * @param schema The {@link Schema} of the partition statistics file.
    * @param inputFile An {@link InputFile} pointing to the partition stats file.
    */
-  public static CloseableIterable<PartitionStatsRecord> readPartitionStatsFile(
+  public static CloseableIterable<PartitionStats> readPartitionStatsFile(
       Schema schema, InputFile inputFile) {
     CloseableIterable<Record> records;
     FileFormat fileFormat = fileFormat(inputFile.location());
@@ -232,14 +234,17 @@ public final class PartitionStatsHandler {
             ((HasTableOperations) table)
                 .operations()
                 .metadataFileLocation(
-                    fileFormat.addExtension(String.format("partition-stats-%d", snapshotId))));
+                    fileFormat.addExtension(String.format(Locale.ROOT, "partition-stats-%d", snapshotId))));
   }
 
-  private static PartitionStatsRecord recordToPartitionStatsRecord(Record record) {
+  private static PartitionStats recordToPartitionStatsRecord(Record record) {
+    Record partition = record.get(Column.PARTITION.id(), Record.class);
+    PartitionData partitionData =
+        recordToPartitionData(
+            partition, (StructType) record.struct().field(Column.PARTITION.name()).type());
+
     PartitionStats stats =
-        new PartitionStats(
-            record.get(Column.PARTITION.id(), StructLike.class),
-            record.get(Column.SPEC_ID.id(), Integer.class));
+        new PartitionStats(partitionData, record.get(Column.SPEC_ID.id(), Integer.class));
     stats.set(Column.DATA_RECORD_COUNT.id(), record.get(Column.DATA_RECORD_COUNT.id(), Long.class));
     stats.set(Column.DATA_FILE_COUNT.id(), record.get(Column.DATA_FILE_COUNT.id(), Integer.class));
     stats.set(
@@ -264,67 +269,15 @@ public final class PartitionStatsHandler {
         Column.LAST_UPDATED_SNAPSHOT_ID.id(),
         record.get(Column.LAST_UPDATED_SNAPSHOT_ID.id(), Long.class));
 
-    return PartitionStatsRecord.create(record.struct(), stats);
+    return stats;
   }
 
-  @VisibleForTesting
-  static Iterator<PartitionStatsRecord> statsToRecords(
-      List<PartitionStats> stats, Schema recordSchema) {
-    StructType partitionType = (StructType) recordSchema.findField(Column.PARTITION.name()).type();
-    return new TransformIteratorWithBiFunction<>(
-        stats.iterator(),
-        (partitionStats, schema) -> {
-          PartitionStatsRecord record = PartitionStatsRecord.create(schema, partitionStats);
-          record.set(
-              Column.PARTITION.id(),
-              convertPartitionValues(
-                  record.get(Column.PARTITION.id(), StructLike.class), partitionType));
-          return record;
-        },
-        recordSchema);
-  }
-
-  private static Record convertPartitionValues(
-      StructLike partitionRecord, StructType partitionType) {
-    if (partitionRecord == null) {
-      return null;
+  private static PartitionData recordToPartitionData(Record partition, StructType type) {
+    PartitionData partitionData = new PartitionData(type);
+    for (int i = 0; i < partition.size(); i++) {
+      partitionData.set(i, partition.get(i));
     }
 
-    GenericRecord converted = GenericRecord.create(partitionType);
-    for (int index = 0; index < partitionRecord.size(); index++) {
-      Object val = partitionRecord.get(index, Object.class);
-      if (val != null) {
-        converted.set(
-            index,
-            IdentityPartitionConverters.convertConstant(
-                partitionType.fields().get(index).type(), val));
-      }
-    }
-
-    return converted;
-  }
-
-  private static class TransformIteratorWithBiFunction<T, U, R> implements Iterator<R> {
-    private final Iterator<T> iterator;
-    private final BiFunction<T, U, R> transformer;
-    private final U additionalInput;
-
-    TransformIteratorWithBiFunction(
-        Iterator<T> iterator, BiFunction<T, U, R> transformer, U additionalInput) {
-      this.iterator = iterator;
-      this.transformer = transformer;
-      this.additionalInput = additionalInput;
-    }
-
-    @Override
-    public boolean hasNext() {
-      return iterator.hasNext();
-    }
-
-    @Override
-    public R next() {
-      T nextElement = iterator.next();
-      return transformer.apply(nextElement, additionalInput);
-    }
+    return partitionData;
   }
 }

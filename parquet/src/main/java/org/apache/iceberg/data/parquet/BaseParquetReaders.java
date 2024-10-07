@@ -398,27 +398,26 @@ public abstract class BaseParquetReaders<T> {
   }
 
   private static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
-  private static final LocalDate EPOCH_DAY = EPOCH.toLocalDate();
 
-  private static class DateReader extends ParquetValueReaders.PrimitiveReader<LocalDate> {
+  private static class DateReader extends ParquetValueReaders.PrimitiveReader<Integer> {
     private DateReader(ColumnDescriptor desc) {
       super(desc);
     }
 
     @Override
-    public LocalDate read(LocalDate reuse) {
-      return EPOCH_DAY.plusDays(column.nextInteger());
+    public Integer read(Integer reuse) {
+      return column.nextInteger();
     }
   }
 
-  private static class TimestampReader extends ParquetValueReaders.PrimitiveReader<LocalDateTime> {
+  private static class TimestampReader extends ParquetValueReaders.PrimitiveReader<Long> {
     private TimestampReader(ColumnDescriptor desc) {
       super(desc);
     }
 
     @Override
-    public LocalDateTime read(LocalDateTime reuse) {
-      return EPOCH.plus(column.nextLong(), ChronoUnit.MICROS).toLocalDateTime();
+    public Long read(Long reuse) {
+      return column.nextLong();
     }
   }
 

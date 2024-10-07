@@ -134,9 +134,9 @@ public class PartitionData
       return null;
     }
 
-    if (data[pos] instanceof byte[]) {
-      return ByteBuffer.wrap((byte[]) data[pos]);
-    }
+//    if (data[pos] instanceof byte[]) {
+//      return ByteBuffer.wrap((byte[]) data[pos]);
+//    }
 
     return data[pos];
   }
@@ -238,17 +238,18 @@ public class PartitionData
   }
 
   private static Object toInternalValue(Object value) {
-    if (value instanceof Utf8) {
-      // Utf8 is not Serializable
-      return value.toString();
-    } else if (value instanceof ByteBuffer) {
-      // ByteBuffer is not Serializable
-      ByteBuffer buffer = (ByteBuffer) value;
-      byte[] bytes = new byte[buffer.remaining()];
-      buffer.duplicate().get(bytes);
-      return bytes;
-    } else {
-      return value;
-    }
+//    if (value instanceof Utf8) {
+//      // Utf8 is not Serializable
+//      return value.toString();
+//    } else if (value instanceof ByteBuffer) {
+//      // ByteBuffer is not Serializable
+//      ByteBuffer buffer = (ByteBuffer) value;
+//      byte[] bytes = new byte[buffer.remaining()];
+//      buffer.duplicate().get(bytes);
+//      return bytes;
+//    } else {
+//      return value;
+//    }
+    return value;
   }
 }
