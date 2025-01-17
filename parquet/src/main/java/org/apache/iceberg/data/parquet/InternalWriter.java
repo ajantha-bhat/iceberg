@@ -19,7 +19,6 @@
 package org.apache.iceberg.data.parquet;
 
 import java.util.List;
-import java.util.Optional;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.parquet.ParquetValueWriter;
 import org.apache.iceberg.parquet.ParquetValueWriters;
@@ -40,13 +39,13 @@ public class InternalWriter extends BaseParquetWriter<StructLike> {
 
   private InternalWriter() {}
 
-  public static ParquetValueWriter<StructLike> buildWriter(MessageType type) {
+  public static ParquetValueWriter<StructLike> create(MessageType type) {
     return INSTANCE.createWriter(type);
   }
 
   @Override
   protected StructWriter<StructLike> createStructWriter(List<ParquetValueWriter<?>> writers) {
-    return new StructLikeWriter(writers);
+    return new ParquetValueWriters.RecordWriter<>(writers);
   }
 
   @Override
@@ -55,18 +54,20 @@ public class InternalWriter extends BaseParquetWriter<StructLike> {
   }
 
   @Override
-  protected Optional<PrimitiveWriter<?>> uuidWriter(ColumnDescriptor desc) {
-    return Optional.of(ParquetValueWriters.uuids(desc));
+  protected PrimitiveWriter<?> dateWriter(ColumnDescriptor desc) {
+    // No special writer required for this logical type.
+    return null;
   }
 
-  private static class StructLikeWriter extends StructWriter<StructLike> {
-    private StructLikeWriter(List<ParquetValueWriter<?>> writers) {
-      super(writers);
-    }
+  @Override
+  protected PrimitiveWriter<?> timeWriter(ColumnDescriptor desc) {
+    // No special writer required for this logical type.
+    return null;
+  }
 
-    @Override
-    protected Object get(StructLike struct, int index) {
-      return struct.get(index, Object.class);
-    }
+  @Override
+  protected PrimitiveWriter<?> timestampWriter(ColumnDescriptor desc, boolean isAdjustedToUTC) {
+    // No special writer required for this logical type.
+    return null;
   }
 }
