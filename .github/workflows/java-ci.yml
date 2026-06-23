@@ -28,38 +28,7 @@ on:
     tags:
     - 'apache-iceberg-**'
   pull_request:
-    paths-ignore:
-    - '.github/ISSUE_TEMPLATE/**'
-    - '.github/workflows/api-binary-compatibility.yml'
-    - '.github/workflows/delta-conversion-ci.yml'
-    - '.github/workflows/docs-ci.yml'
-    - '.github/workflows/flink-ci.yml'
-    - '.github/workflows/hive-ci.yml'
-    - '.github/workflows/jmh-benchmarks-ci.yml'
-    - '.github/workflows/kafka-connect-ci.yml'
-    - '.github/workflows/cve-scan.yml'
-    - '.github/workflows/labeler.yml'
-    - '.github/workflows/license-check.yml'
-    - '.github/workflows/open-api.yml'
-    - '.github/workflows/pr-title-check.yml'
-    - '.github/workflows/publish-snapshot.yml'
-    - '.github/workflows/recurring-jmh-benchmarks.yml'
-    - '.github/workflows/site-ci.yml'
-    - '.github/workflows/spark-ci.yml'
-    - '.github/workflows/stale.yml'
-    - '.gitignore'
-    - '.asf.yaml'
-    - 'dev/**'
-    - 'docker/**'
-    - 'docs/**'
-    - 'site/**'
-    - 'format/**'
-    - '.gitattributes'
-    - '**/README.md'
-    - 'CONTRIBUTING.md'
-    - '**/LICENSE'
-    - '**/NOTICE'
-    - 'doap.rdf'
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -69,7 +38,48 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  workflow_plan:
+    uses: ./.github/workflows/workflow-ci-plan.yml
+    with:
+      ignored_paths: |
+        .github/ISSUE_TEMPLATE/**
+        .github/workflows/api-binary-compatibility.yml
+        .github/workflows/delta-conversion-ci.yml
+        .github/workflows/docs-ci.yml
+        .github/workflows/flink-ci.yml
+        .github/workflows/hive-ci.yml
+        .github/workflows/jmh-benchmarks-ci.yml
+        .github/workflows/kafka-connect-ci.yml
+        .github/workflows/cve-scan.yml
+        .github/workflows/labeler.yml
+        .github/workflows/license-check.yml
+        .github/workflows/open-api.yml
+        .github/workflows/pr-title-check.yml
+        .github/workflows/publish-snapshot.yml
+        .github/workflows/recurring-jmh-benchmarks.yml
+        .github/workflows/site-ci.yml
+        .github/workflows/spark-ci.yml
+        .github/workflows/stale.yml
+        .gitignore
+        .asf.yaml
+        dev/**
+        docker/**
+        docs/**
+        site/**
+        format/**
+        .gitattributes
+        README.md
+        **/README.md
+        CONTRIBUTING.md
+        LICENSE
+        **/LICENSE
+        NOTICE
+        **/NOTICE
+        doap.rdf
+
   core-tests:
+    needs: workflow_plan
+    if: needs.workflow_plan.outputs.run_workflow == 'true'
     runs-on: ubuntu-24.04
     strategy:
       max-parallel: 15
@@ -99,6 +109,8 @@ jobs:
           **/build/testlogs
 
   build-checks:
+    needs: workflow_plan
+    if: needs.workflow_plan.outputs.run_workflow == 'true'
     runs-on: ubuntu-24.04
     strategy:
       max-parallel: 15
@@ -119,6 +131,8 @@ jobs:
     - run: ./gradlew -DallModules build -x test -x javadoc -x integrationTest
 
   build-javadoc:
+    needs: workflow_plan
+    if: needs.workflow_plan.outputs.run_workflow == 'true'
     runs-on: ubuntu-24.04
     strategy:
       max-parallel: 15
@@ -139,6 +153,8 @@ jobs:
     - run: ./gradlew -Pquick=true javadoc
 
   check-runtime-deps:
+    needs: workflow_plan
+    if: needs.workflow_plan.outputs.run_workflow == 'true'
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
